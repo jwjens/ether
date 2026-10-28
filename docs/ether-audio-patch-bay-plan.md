@@ -7,6 +7,29 @@ replacement … For each part: what already exists in the code, what's new, what
 several devices), the risks, how it would be tested, and the questions I need to answer. No content or programming
 decisions. The engine is compiled only when this computer is off air. Then stop and wait for me."
 
+## The plan, in order (Jeff, 2026-10-27, verbatim: "Update docs/ether-audio-patch-bay-plan.md with no letters, in this
+order: Building now: 1. Patch Bay, outputs. 2. Patch Bay, inputs. 3. Remote Link: close the "same account" security gap
+first, then the relay on the Ether server so machines find each other with no IP addresses or ports. Later, once we have
+our own signed driver: 4. Ether Mic, 5. App Audio. No licensing of another brand. Nothing about the board, decks or aux
+faders changes.")
+
+**Building now**
+1. **Patch Bay, outputs.** Built with Jeff's four Outputs answers (below).
+2. **Patch Bay, inputs.**
+3. **Remote Link.** First close the "same account" security gap, then build the relay on the Ether server, so machines
+   find each other with no IP addresses or ports.
+
+**Later, once we have our own signed driver**
+4. **Ether Mic.** Ether as a microphone other apps can pick.
+5. **App Audio.** Any app's sound as a source.
+
+**Rules**
+- No licensing of another brand: the virtual device is our own Microsoft-signed driver.
+- Nothing about the board, decks or aux faders changes. Faders, levels, mutes, DUCK, the source dropdown and the decks
+  stay as they are. Only the **device pickers** move into the Patch Bay, per Outputs answers 1 and 3 ("in one place only";
+  "AUX moves into Outputs"). The aux faders and their levels stay on the board.
+- Nothing is started without Jeff's go; each step stops for it.
+
 Governing docs: `docs/outputs-section-plan-2026-10-27.md` (Jeff's four answers, kept below unchanged),
 `docs/audio-output-selectors-wiring-2026-10-27.md`, `docs/dsp-mic-in-engine.md`, `docs/remote-link-design-2026-09-28.md`,
 the MONITOR rule (`docs/monitor-bypass-diagnosis.md`, 2026-10-07: every local output passes MONITOR; only PFL to a cue
@@ -15,7 +38,7 @@ device is exempt), and "faders are generic" (the SOURCE dropdown is the user's c
 All "today" facts below are from the source tree (file:line). How the running app behaves is **UNVERIFIED** unless a
 runtime receipt is named.
 
-## Jeff's Outputs answers (2026-10-27) — kept, they bind Part A
+## Jeff's Outputs answers (2026-10-27) — kept, they bind step 1
 1. **Master** is the existing main/monitor output, after the MONITOR fader, one per station. Renamed Master. No new output.
 2. **Stalls:** a setting, "If the output device stalls, switch to the Windows default", on or off. Until the user sets
    it, warn on screen and keep retrying; never switch on its own.
@@ -52,25 +75,26 @@ the engine actually opened, a missing device = a clear on-screen warning naming 
 
 ---
 
-## A. Patch Bay
+## 1 and 2. Patch Bay (1 = outputs, 2 = inputs)
 
 ### What it is
 A pop-out window (the existing popout mechanism, `PopoutRenderer.tsx`), reachable from the hamburger menu (doors before
 rooms) and from a pointer line where each removed picker used to be. Two grids:
 
-- **Outputs grid.** Rows = Ether's outputs: Master, Cue/PFL, Aux, per station (Jeff's answer 1: Master is the existing
+- **Outputs grid (step 1).** Rows = Ether's outputs: Master, Cue/PFL, Aux, per station (Jeff's answer 1: Master is the existing
   output, one per station). Columns = every output channel pair on every device on this computer (a stereo device = one
   column "1-2"; an 8-channel interface = "1-2, 3-4, 5-6, 7-8"). Click a crosspoint to connect. One row may connect to
   several columns (several devices at once).
-- **Inputs grid.** Rows = sources: each device input channel (and pair), app audio (Part B), Remote Link feeds (Part D),
+- **Inputs grid (step 2).** Rows = sources: each device input channel (and pair), App Audio (step 5), Remote Link feeds (step 3),
   Park mics (`park:1`/`park:2`, already pseudo-inputs, `main.js:6776-6786`). Columns = source channels (D, E, F, S1-S5).
 - Each connected crosspoint shows its state from the engine, naming the device: **live**, **opening**, **missing — <device
   name>**, **failed — <reason>**, **stalled**. No silent fallback anywhere.
 - Saved per computer (machine-local keys, same rule as today). The daemon re-applies them on connect
   (`audiod/board-state.js:223-226`).
 - **It replaces every other output and input picker** for engine audio: Station Monitors → OUTPUT, the Pro
-  Multi-Output Audio Routing panel, the AUX device select, the PFL device select, Preferences → Mic inputs, the input
-  devices on the fader SOURCE dropdown, the Link sender pickers. Each becomes a one-line pointer "Patched in the Patch Bay
+  Multi-Output Audio Routing panel, the AUX device select, the PFL device select, Preferences → Mic inputs, the Link
+  sender pickers. **The fader SOURCE dropdown stays as it is** (nothing about the board changes); how its "input
+  devices" list and the inputs grid stay in agreement is a step 2 question. Each removed picker becomes a one-line pointer "Patched in the Patch Bay
   → <current patch>". Level/mute controls stay where they are (Jeff: keep Master's level and mute, including the Park
   page, working exactly as now).
 
@@ -124,7 +148,7 @@ one can be the clock.
 - App launch, Patch Bay window screenshot with live / missing crosspoints (a UI claim needs the real screen).
 - Migration test: today's keys → the patch document, nothing changes on first launch.
 
-### Questions for Jeff (A)
+### Questions for Jeff (steps 1 and 2)
 1. Patch Bay saved **per station** (each station's Master/Cue/Aux) or one patch for the whole computer?
 2. Same device + same pair on two rows (Master and Aux into Speakers 1-2): allow (Windows mixes them) or refuse?
 3. Should the Patch Bay also take over the browser-only pickers (voice-track mic, phone hybrid input, Track Editor
@@ -134,7 +158,7 @@ one can be the clock.
 
 ---
 
-## B. Any app's sound as a source (per-app capture)
+## 5. App Audio: any app's sound as a source (later, after our own signed driver)
 
 ### What it is
 On a source channel's patch (Patch Bay inputs grid), pick a running app — Zoom, a browser, Discord. Its audio comes in on
@@ -178,8 +202,8 @@ that fader. Uses Windows' **process loopback** capture (`ActivateAudioInterfaceA
   fail.
 - Browsers and Electron apps play audio from a child process (Chrome's audio service). Include-tree mode on the parent is
   expected to cover it; **UNVERIFIED**, test per app.
-- Echo: an app that also *hears* Ether (Zoom with Ether as its mic, Part C) and is captured back onto a fader loops
-  unless the return is a mix-minus. Part C's mix-minus is the answer; until then, refuse or warn → question.
+- Echo: an app that also *hears* Ether (Zoom with Ether as its mic, step 4) and is captured back onto a fader loops
+  unless the return is a mix-minus. Ether Mic's mix-minus (step 4) is the answer; until then, refuse or warn → question.
 - Managed boxes (OV, McAfee): process loopback needs no driver and no admin. Endpoint security could still flag
   per-process audio capture. **UNVERIFIED.**
 
@@ -190,14 +214,14 @@ that fader. Uses Windows' **process loopback** capture (`ActivateAudioInterfaceA
   each, read the state transitions, and listen.
 - On a Windows 10 box, if there is one: confirm the honest "not supported" (or that it works).
 
-### Questions for Jeff (B)
+### Questions for Jeff (step 5)
 1. What Windows version is OV's computer? Is there any Windows 10 box this must work on?
 2. An app with several windows or processes: capture all of them as one source, or pick one?
 3. Until mix-minus exists: refuse to capture an app that is using Ether as its mic, or allow it with a warning?
 
 ---
 
-## C. Ether as a microphone other apps can pick
+## 4. Ether Mic: Ether as a microphone other apps can pick (later, our own signed driver)
 
 ### What it is
 Zoom, Teams and OBS list **"Ether"** as a microphone. Selecting it gives them an Ether output: the programme, or a
@@ -207,7 +231,7 @@ has no supported way for an ordinary app to create a microphone that other apps 
 ### What already exists
 - No virtual device and no mix-minus in the engine. The Strata spec lists mix-minus as missing
   (`docs/strata-to-ethercast-build-spec.md:42,124,179`). The Remote Link design defers it (`remote-link-design-2026-09-28.md:236`).
-- Ether can already send audio to any output device (Part A), so once a virtual device exists, feeding it is just one
+- Ether can already send audio to any output device (step 1), so once a virtual device exists, feeding it is just one
   more Patch Bay column.
 
 ### What's new, whichever way is chosen
@@ -216,9 +240,10 @@ has no supported way for an ordinary app to create a microphone that other apps 
 - Engine: **mix-minus buses**. Each is "the programme minus channel X" (an N-1 per source), selectable as a Patch Bay
   output row. This is new mixer work in the callback.
 - Installer: the device is installed with admin rights. Uninstall removes it.
-- Patch Bay: the virtual device shows as columns like any device, and its state comes from the same status as Part A.
+- Patch Bay: the virtual device shows as columns like any device, and its state comes from the same status as step 1.
 
-### Two ways — for Jeff to decide
+### Decided: our own Microsoft-signed driver (Jeff, 2026-10-27: "No licensing of another brand.")
+The comparison is kept for the record; option 2 is closed.
 
 | | 1. Our own Microsoft-signed audio driver | 2. License and bundle VB-Audio's virtual cable |
 |---|---|---|
@@ -244,16 +269,15 @@ Windows 10/11 (**UNVERIFIED** against the newest Windows 11 releases; worth one 
   (or CABLE) and record the programme. Then a reboot, sleep/resume, and a Windows update on a VM.
 - Mix-minus: a null test. A caller on S3 hears the programme with S3 nulled out (a render-harness test in Rust).
 
-### Questions for Jeff (C)
-1. Which way: our own signed driver, or a VB-Audio license? (Before deciding: I can request VB-Audio's licensing terms
-   and price, which is outward-facing, so only on your go.)
+### Questions for Jeff (step 4)
+1. Decided: our own signed driver. Open: who writes and signs it (in-house or a contracted driver developer)?
 2. How many "Ether" microphones: one (programme, or one chosen mix-minus), or one per caller?
 3. Mix-minus: in scope now? With a talkback key?
 4. macOS (USPH): needed at the same time?
 
 ---
 
-## D. Remote Link as the VBAN replacement
+## 3. Remote Link as the VBAN replacement
 
 ### Starting point: what was approved
 - `docs/remote-link-design-2026-09-28.md`. Rulings GO 2026-09-28 (:259-271):
@@ -335,34 +359,29 @@ Windows 10/11 (**UNVERIFIED** against the newest Windows 11 releases; worth one 
 - The backend relay: unit tests for session setup, the right account only (H5 fixed), and teardown.
 - Then OVEVENTS ↔ ovowforestmusic, **only on Jeff's go**. OV is live; this plan never touches it on its own.
 
-### Questions for Jeff (D)
+### Questions for Jeff (step 3)
 1. Relay: approve building it, and where should it run (Railway next to the backend, or Lightsail next to Icecast)?
    "No Lightsail in this run" was the 2026-09-28 ruling.
 2. Does the sending machine's operator need to approve a new receiver, or is anyone on the same account allowed?
 3. What can a machine send: only the programme (today, pre-processing), or any output row (Master, Aux, a mix-minus)?
 4. How many Link streams per station, in and out?
 5. SRT: still wanted after the relay, or does relay plus UDP replace it?
-6. Close H5 and M1 first? (Recommended.)
+6. Decided: close H5 and M1 first.
 
 ---
 
-## How the four parts fit, and an order (proposal)
-1. **A first, outputs only.** This is Jeff's Outputs answers plus several destinations per output and the Patch Bay
-   window. Everything else plugs into its grid.
-2. **A, inputs grid.** Today's mic and Link patches move into it, and stereo pairs are added.
-3. **D.** Close H5/M1, build the relay, and pick the sender in the Patch Bay. This replaces VBAN between Ether machines.
-4. **B.** App audio as a source. It doesn't depend on C, but echo safety wants C's mix-minus.
-5. **C.** Once Jeff has chosen the driver route: the virtual device plus mix-minus.
+## How the parts fit
+The Patch Bay (steps 1 and 2) is the grid every other part plugs into. Remote Link feeds (step 3) are rows in its inputs
+grid. Ether Mic (step 4) is a column in its outputs grid. App Audio (step 5) is rows in its inputs grid.
 
-Every engine step is compiled only when this computer is off air (Jeff's answer 4), and is proved on an isolated engine
-before anything reaches a station. Each step is its own commit with a test, and its help entry is `docs/help-patch-bay.md`
-(plus updates to `help-remote-link.md`).
+Every engine step is compiled only when this computer is off air (Outputs answer 4), and is proved on an isolated
+engine before anything reaches a station. Each step is its own commits with tests. Its help entry is
+`docs/help-patch-bay.md`, plus updates to `help-remote-link.md`.
 
 **Stopped here, waiting for Jeff.**
 
-## Jeff's ruling (2026-10-27, verbatim)
+## Jeff's earlier ruling (2026-10-27, verbatim; superseded by the order at the top)
 "Patch Bay: agreed order A outputs, A inputs, D, B, C. Before D makes machines easier to find, close the "same account"
 security gap. Don't start building any part until I say go."
-- Order: A outputs → A inputs → D → B → C.
 - Before D: close the "same account" gap (`docs/multitenancy-audit.md` H5, plus M1).
 - Nothing is built until Jeff says go.
