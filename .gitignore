@@ -105,3 +105,4 @@ openair-backup.db
 native/goldens/*
 !native/goldens/manifest.json
 !native/goldens/manifest-*.json
+!native/goldens/*.md

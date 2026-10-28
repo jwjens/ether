@@ -1854,7 +1854,12 @@ mod slice1_regression {
     ///     two passes (pre-fix, f76ca2c's duplicate present) : 0xc209c866cea3d4ca
     ///     one pass   (after the 2026-08-22 fix)             : 0x769d4d2c7a0689d7
     /// If a second ride/limiter pass over aux_l/aux_r ever returns, this test goes red.
-    const GOLDEN_AUX_SINGLE_PASS: u64 = 0x769d4d2c7a0689d7;
+    ///
+    /// RE-BASELINED 2026-10-28 (Jeff: "commit it as is"), from 1f63e41: the limiter (7e218ca, BS.1770 detector, no
+    /// margin) changed what the single pass computes — still ONE pass. Checked commit by commit
+    /// (native/goldens/rebaseline-check-2026-10-28.md): 0x769d4d2c7a0689d7 through 277e750, 0xb8690f3e7ea3c65a from
+    /// 7e218ca on. Old values: 0xc209c866cea3d4ca (two passes), 0x769d4d2c7a0689d7 (one pass, before the limiter).
+    const GOLDEN_AUX_SINGLE_PASS: u64 = 0xb8690f3e7ea3c65a;
 
     #[test]
     fn aux_monitor_single_pass_regression() {

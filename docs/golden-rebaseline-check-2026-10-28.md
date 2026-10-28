@@ -6,8 +6,8 @@ intentional changes and nothing else, then commit the new baseline. The full eng
 re-baseline finish: compare against the 2026-10-13 record, commit the new baseline from 1f63e41 and the new Aux checksum,
 and run the full engine suite. It must pass."
 
-**Status: NOT committed.** There is a third change the 2026-10-13 record (`docs/golden-review-4.6.59-2026-10-13.md`)
-does not name. It waits for Jeff.
+**Status: committed (Jeff, 2026-10-28: "commit it as is (duck renders at -20 dB), with the 2026-10-13 record and today's
+check archived beside it").** The third change below (`02e7f80`) is accepted as part of the baseline.
 
 ## Method
 
@@ -56,3 +56,12 @@ are not the ones in the review folder.
 
 Ready either way: the `1f63e41` manifest and its 43 renders are in the scratch worktree, and the new AUX checksum is
 `0xb8690f3e7ea3c65a`.
+
+## Decision (Jeff, 2026-10-28)
+
+"Re-baseline: commit it as is (duck renders at -20 dB), with the 2026-10-13 record and today's check archived beside it.
+The full engine suite must pass."
+
+- `native/goldens/manifest.json` = the `1f63e41` capture (43 renders); the old one archived as `manifest-7896e92.json`.
+- `GOLDEN_AUX_SINGLE_PASS` = `0xb8690f3e7ea3c65a`, both old values kept in its comment.
+- Beside them: `review-record-2026-10-13.md` (the record) and `rebaseline-check-2026-10-28.md` (this check).
