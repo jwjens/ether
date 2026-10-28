@@ -23,7 +23,8 @@ For the whole station it also holds:
 - the master rack;
 - the master fader;
 - the ducker settings;
-- the monitor level.
+- the monitor level;
+- whether decks A, B and C are collapsed into one strip or shown as three (set on this computer when you TAKE it).
 
 **Take a show** and the board changes to it in one step, in the same instant.
 

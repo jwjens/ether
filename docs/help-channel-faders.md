@@ -92,6 +92,32 @@ measures each file once (in the background, after import) and plays it at the **
 measured plays as it is and is listed in the Health Monitor. See **Loudness normalization**
 (`docs/help-loudness-normalization.md`).
 
+## A board wider than the window
+
+The strips work like a digital console's fader banks:
+
+- **A strip never gets so narrow that something is cut off.** Each one keeps room for its cap, ON, PFL, EQ and its
+  source. When there's more room, the strips spread out.
+- **When they don't all fit, the board scrolls sideways.** **Master Out stays on the right**, always in view.
+- A row of small boxes above the board, **FADERS**, shows every fader by its letter. The ones you can see are lit.
+  **Click a letter to go to that fader.** The row only appears when the strips don't all fit.
+- **On a narrow strip:** the dB number moves off the cap and shows just above it while you move the fader (or press
+  **Enter** to type a level); the source shows a short name ("Announce", "Cart/SFX"), and the full name when you point
+  at it; ON and PFL sit one above the other.
+
+## Decks A, B and C as one strip
+
+Press the slim **A·B·C** tab to the left of Deck A to collapse the three music decks into **one strip**.
+
+- **That strip is the playing deck's own fader.** While Deck A plays, it is A's fader, ON and PFL. When Deck B starts,
+  the strip turns to B's fader, and its colour bar turns B's colour; then C, then back to A. The cap shows that deck's
+  real level.
+- The small **A B C** at the top of the strip shows which deck it is.
+- Press **EXPAND** to show A, B and C as three strips again.
+- **Collapsing or expanding never changes a deck's level or what plays.** It only changes what you see.
+- It's remembered **on this computer**, for each station. A **show preset** also remembers it: TAKE the show and the
+  decks collapse or expand the way they were when it was saved.
+
 ## Cutting a channel (ON / OFF)
 
 Press **ON** to toggle the channel cut.
