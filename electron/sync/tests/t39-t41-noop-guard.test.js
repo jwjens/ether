@@ -11,7 +11,7 @@
 // journals, and resurrecting a tombstone counts as a real change (it is the point of the upsert).
 
 const { createTestDb } = require('./helpers/create-test-db');
-const { stationConfigKvUpsertByKey } = require('../handlers/station_config_kv');
+const { stationConfigKvUpsertByKey, stationConfigKvCreate, stationConfigKvUpdate } = require('../handlers/station_config_kv');
 
 const mutationCount = (db) => db.prepare('SELECT COUNT(*) n FROM mutations').get().n;
 const rowFor = (db, stationId, key) =>
@@ -67,6 +67,37 @@ describe('J: station_config_kv no-op guard', () => {
     stationConfigKvUpsertByKey(db, 2, 'sync_enabled', 'true');
     expect(mutationCount(db)).toBe(base + 1);
     expect(rowFor(db, 2, 'sync_enabled').deleted_at).toBeNull();
+  });
+
+  // The two other writers got the same guard on 2026-10-27 (docs/library-sync-open-items-2026-10-27.md §4).
+  it('T-41b: Update with the value already stored (or only updated_at) journals NOTHING; a real change journals one', () => {
+    const { db } = createTestDb({ tables: ['station_config_kv'] });
+    const row = stationConfigKvUpsertByKey(db, 2, 'monitor_volume', '0.8');
+    const base = mutationCount(db);
+
+    stationConfigKvUpdate(db, row.uuid, { value: '0.8' });
+    stationConfigKvUpdate(db, row.uuid, { updated_at: new Date().toISOString() });
+    expect(mutationCount(db)).toBe(base);
+    expect(rowFor(db, 2, 'monitor_volume').updated_at).toBe(row.updated_at);
+
+    stationConfigKvUpdate(db, row.uuid, { value: '0.5' });
+    expect(mutationCount(db)).toBe(base + 1);
+    expect(rowFor(db, 2, 'monitor_volume').value).toBe('0.5');
+  });
+
+  it('T-41c: Create of a key this station already holds with the same value journals NOTHING and makes no second row', () => {
+    const { db } = createTestDb({ tables: ['station_config_kv'] });
+    const first = stationConfigKvCreate(db, { station_id: 2, key: 'board_levels', value: '{"a":1}' });
+    const base = mutationCount(db);
+
+    const again = stationConfigKvCreate(db, { station_id: 2, key: 'board_levels', value: '{"a":1}' });
+    expect(again.uuid).toBe(first.uuid);
+    expect(mutationCount(db)).toBe(base);
+    expect(db.prepare("SELECT COUNT(*) n FROM station_config_kv WHERE station_id = 2 AND key = 'board_levels'").get().n).toBe(1);
+
+    // the same key on ANOTHER station is a different row, and is created
+    stationConfigKvCreate(db, { station_id: 3, key: 'board_levels', value: '{"a":1}' });
+    expect(mutationCount(db)).toBe(base + 1);
   });
 
   // OPEN — no T-42 yet. `_sameValue` in the handler compares String(a) === String(b) so that a

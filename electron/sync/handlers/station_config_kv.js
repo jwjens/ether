@@ -171,6 +171,13 @@ function stationConfigKvCreate(db, payload) {
   if (HAS_STATION_ID_COL && payload.station_id == null) {
     throw new Error(`[station_config_kv] station_id is required for station-scoped create`);
   }
+  // NO-OP GUARD (as stationConfigKvUpsertByKey): creating a key this station already holds, live, with the same value,
+  // changes nothing — journal nothing and hand back the existing row. A different value, or a tombstoned row, still
+  // goes through as before.
+  const same = db.prepare(`SELECT * FROM ${TABLE} WHERE station_id IS ? AND key = ? AND deleted_at IS NULL`).get(payload.station_id ?? null, payload.key);
+  if (same && _sameValue(same.value, payload.value) && (payload.uuid == null || payload.uuid === same.uuid)) {
+    return stationConfigKvGet(db, same.uuid);
+  }
   const now  = new Date().toISOString();
   const uuid = payload.uuid ?? crypto.randomUUID();
   const row  = {
@@ -213,6 +220,12 @@ function stationConfigKvUpdate(db, uuid, patch) {
   const patchFields = PATCHABLE.filter(k => k in patch);
   if (patchFields.length === 0) {
     throw new Error(`[station_config_kv] no patchable fields provided in patch`);
+  }
+
+  // NO-OP GUARD (as stationConfigKvUpsertByKey): an update that leaves the value as it is — or only touches
+  // updated_at — changes nothing on a live row. Journal nothing.
+  if (existing.deleted_at == null && (!('value' in patch) || _sameValue(existing.value, patch.value))) {
+    return stationConfigKvGet(db, uuid);
   }
 
   const now     = new Date().toISOString();

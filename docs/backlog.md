@@ -619,7 +619,19 @@ duration-aware default would reduce how often the slice path engages, though it 
 
 ---
 
-## station_config_kv writing ~745 mutations/hour on OV (filed 2026-08-17, NOT INVESTIGATED)
+## station_config_kv writing ~745 mutations/hour on OV (filed 2026-08-17) — CLOSED 2026-10-27
+
+**Closed (Jeff, 2026-10-27: "close the backlog entry with today's numbers").** The writer was found and fixed the day
+this was filed: `f582ec3` (4.4.225) — `stampLicenseEverywhere` re-stamped `license_key` on every station every 20 s
+(2,312 of 2,312 mutations identical before/after); no-op guard in `stationConfigKvUpsertByKey`
+(docs/fix-pass-2026-08-17-sync.md). **Measured 2026-10-27 on OVEVENTS** (read-only copy, last 24 h): **286**
+`station_config_kv` mutations (~12/hour, was ~745/hour); top keys `monitor_volume` 82, `park_sound_last` 61,
+`aux_monitor_levels` 21, `board_levels` 9, `sweeper_placement_log` 8 — **0 identical before/after**, every one a real
+change. The two other writers (`stationConfigKvCreate` / `Update`) got the same guard 2026-10-27 (T-41b, T-41c).
+OV's own rate was not measured (out of bounds). docs/library-sync-open-items-2026-10-27.md §4.
+
+The original entry, as filed:
+
 
 Measured on the production backend, read-only: OV (client `041ceb96`) has **46,861**
 `station_config_kv` mutations stored, **4,472 in a six-hour window** — roughly 745/hour, sustained,
