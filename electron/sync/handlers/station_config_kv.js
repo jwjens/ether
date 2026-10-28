@@ -104,7 +104,8 @@ const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'ki
 // key. The key must NOT ride the mutation log: delivering it to the account's other machines is a backend slice.
 // patch_ (2026-10-27) — THE PATCH BAY (audiod/output-patch.js): `patch_outputs` names this machine's devices and channel
 // pairs for Master / Aux / Cue. A device name belongs to one machine, the same rule as audio_output_device.
-const LOCAL_ONLY_PREFIXES = ['grid_widths_', 'mic_input_', 'link_', 'patch_'];
+// board_view_ (2026-10-28): the board's A/B/C view, collapsed or expanded, on THIS computer (src/lib/deckView.ts).
+const LOCAL_ONLY_PREFIXES = ['grid_widths_', 'mic_input_', 'link_', 'patch_', 'board_view_'];
 const isLocalOnlyKey = (k) =>
   typeof k === 'string' && (LOCAL_ONLY_KEYS.has(k) || LOCAL_ONLY_PREFIXES.some((p) => k.startsWith(p)));
 

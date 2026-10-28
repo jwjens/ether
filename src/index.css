@@ -1112,3 +1112,10 @@ button:active:not(:disabled):not(.menu-btn):not(.menu-item) { filter: brightness
 }
 
 
+
+/* THE A/B/C VIEW (src/lib/deckView.ts): the collapsed strip rotates to the deck that just started. */
+@keyframes deck-rotate-in {
+  from { transform: rotateY(-75deg) translateX(-35%); opacity: 0.25; }
+  to   { transform: none; opacity: 1; }
+}
+.deck-rotate-in { animation: deck-rotate-in 0.45s ease-out; transform-origin: left center; }

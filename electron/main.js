@@ -6611,6 +6611,26 @@ function _showOnLevels(m) {
   }, 1000));
   try { _boardWatch.poke(sid); } catch {}
 }
+// THE A/B/C VIEW (Jeff, 2026-10-28; src/lib/deckView.ts): collapsed into one strip, or expanded. Per computer
+// (board_view_decks, LOCAL_ONLY, set locally) and set by a show preset Take. Drawing only: it never touches the engine.
+function _boardViewChanged(sid, view) { sendToAllWindows("board:decks-view", { stationUuid: _stationUuidById(sid), view }); }
+ipcMain.handle("board:decks-view-get", (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return "expanded";
+  try {
+    const r = getDb().prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key=? AND deleted_at IS NULL").get(sid, ShowPresets.BOARD_VIEW_KEY);
+    return r && r.value === "collapsed" ? "collapsed" : "expanded";
+  } catch { return "expanded"; }
+});
+ipcMain.handle("board:decks-view-set", (_, stationId, view) => {
+  const sid = Number(stationId);
+  const v = view === "collapsed" ? "collapsed" : "expanded";
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  try { require("./sync/handlers/station_config_kv").stationConfigKvSetLocal(getDb(), sid, ShowPresets.BOARD_VIEW_KEY, v); }
+  catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  _boardViewChanged(sid, v);
+  return { ok: true, view: v };
+});
 function _showOnApplied(m) {
   const sid = Number(m.stationId);
   let plan;
@@ -6622,6 +6642,11 @@ function _showOnApplied(m) {
   const failed = [];
   for (const [key, value] of plan.kv) { try { stationConfigKvUpsertByKey(db, sid, key, value); } catch (e) { failed.push(`${key}: ${e.message}`); } }
   for (const [slot, patch] of plan.deck) { try { deckConfigsUpdateBySlot(db, sid, slot, patch); } catch (e) { failed.push(`${slot}: ${e.message}`); } }
+  // The A/B/C view the preset carries — this computer's, set locally (never synced).
+  for (const [key, value] of plan.local || []) {
+    try { require("./sync/handlers/station_config_kv").stationConfigKvSetLocal(db, sid, key, value); _boardViewChanged(sid, value); }
+    catch (e) { failed.push(`${key}: ${e.message}`); }
+  }
   console.log(`[show] s${sid} stores written (${m.reason}): ${plan.kv.map(([k]) => k).join(", ") || "no kv"} · deck ${plan.deck.map(([s]) => s).join(",") || "none"}` +
               (failed.length ? ` · FAILED ${failed.join("; ")}` : ""));
   // By UUID, never the integer (the leak guard). useDeckConfig re-reads on a frame with no integer station — one

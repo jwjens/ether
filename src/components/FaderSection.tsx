@@ -44,6 +44,8 @@ import MasterOutput from "./MasterOutput";
 import BoardOverview from "./BoardOverview";
 import { STRIP_MIN_PX } from "../lib/boardLayout";
 import { useBoardName } from "../hooks/useBoardName";
+import { useDecksView } from "../hooks/useDecksView";
+import { DECKS, COLLAPSED_SLOT, shownDeck, viewOrder, type DeckId } from "../lib/deckView";
 
 // THE FADER BANK (src/lib/boardLayout.ts): every strip at least STRIP_MIN_PX wide, spreading above it; never squeezed.
 const STRIP_BOX: React.CSSProperties = { flex: `1 0 ${STRIP_MIN_PX}px`, minWidth: STRIP_MIN_PX };
@@ -284,6 +286,17 @@ export default function FaderSection({
   const bankRef = useRef<HTMLDivElement | null>(null);
   const boardName = useBoardName();
 
+  // THE A/B/C VIEW (src/lib/deckView.ts): collapsed, ONE strip shows the deck that started most recently. All three deck
+  // strips stay mounted (levels, MIDI, meters untouched); only which one is visible changes.
+  const [decksView, setDecksView] = useDecksView();
+  const prevDeckStatus = useRef<Record<DeckId, string | undefined>>({ A: undefined, B: undefined, C: undefined });
+  const [shown, setShown] = useState<DeckId>("A");
+  useEffect(() => {
+    const now = { A: deckA?.status, B: deckB?.status, C: deckC?.status };
+    setShown(prev => shownDeck(prev, prevDeckStatus.current, now));
+    prevDeckStatus.current = now;
+  }, [deckA?.status, deckB?.status, deckC?.status]);
+
   return (
 <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
   {/* SLICE 7 — the show preset bar, on the board itself (so it is in the dashboard AND the pop-out board). */}
@@ -294,7 +307,7 @@ export default function FaderSection({
   {/* THE BANK: the strips and +, scrolling sideways when they don't fit. Master Out is outside it, pinned right. */}
   {/* It grows as much as its strips together (one share each), so Master Out keeps the one share it always had. */}
   <div ref={bankRef} data-board-bank="1" style={{ display: "flex", flex: `${Math.max(1, activeDeckOrder.length)} 1 0px`, minWidth: 0, minHeight: 0, overflowX: "auto", overflowY: "hidden" }}>
-  {activeDeckOrder.map((slot) => {
+  {(() => { const renderSlot = (slot: string): React.ReactNode => {
     const stored = deckConfigs?.find(d => d.slot === slot);
     // A slot the engine is carrying with no config row is still a CHANNEL. It renders as the
     // generic source strip — selector, fader, ON/PFL, meter — rather than defaulting to a
@@ -496,7 +509,50 @@ export default function FaderSection({
         />
       </div>
     );
-  })}
+  };
+  const order = viewOrder(activeDeckOrder, decksView);
+  const firstDeck = order.find(x => (DECKS as readonly string[]).includes(x));
+  return order.map((slot) => {
+    if (slot === COLLAPSED_SLOT) {
+      // ONE STRIP: the shown deck's own strip; the others are mounted, hidden. A new deck rotates in.
+      return (
+        <div key={COLLAPSED_SLOT} data-board-strip={shown} data-decks-collapsed={shown} style={{ ...STRIP_BOX, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 4px", borderBottom: "1px solid var(--strip-divider, #303040)", flexShrink: 0 }}>
+            {DECKS.map(d => (
+              <span key={d} data-decks-lamp={d} title={d === shown ? `Deck ${d} — this strip is Deck ${d}'s fader` : `Deck ${d}`}
+                    style={{ fontSize: 9, fontWeight: 800, padding: "0 4px", borderRadius: 2,
+                             color: d === shown ? "#fff" : "var(--text-tertiary)", background: d === shown ? `var(--deck-${d.toLowerCase()})` : "transparent" }}>{d}</span>
+            ))}
+            <button onClick={() => setDecksView("expanded")} aria-label="Expand decks A, B and C" title="Show decks A, B and C as three strips"
+                    style={{ marginLeft: "auto", fontSize: 9, fontWeight: 800, padding: "1px 5px", cursor: "pointer", borderRadius: 2,
+                             border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", color: "var(--text-secondary)" }}>EXPAND</button>
+          </div>
+          <div style={{ flex: 1, display: "flex", minHeight: 0, perspective: 700, overflow: "hidden" }}>
+            {DECKS.map(d => (
+              <div key={d} data-decks-face={d} className={d === shown ? "deck-rotate-in" : undefined}
+                   style={{ flex: 1, minWidth: 0, display: d === shown ? "flex" : "none" }}>{renderSlot(d)}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+    if (decksView === "expanded" && slot === firstDeck) {
+      // The door to the one-strip view, a slim tab before Deck A (like + after the last fader).
+      return (
+        <React.Fragment key={slot}>
+          <div style={{ display: "flex", alignItems: "stretch", padding: "0 1px", flexShrink: 0 }}>
+            <button onClick={() => setDecksView("collapsed")} aria-label="Collapse decks A, B and C into one strip"
+                    title="Collapse decks A, B and C into one strip: it shows the playing deck's own fader"
+                    style={{ width: 16, alignSelf: "center", padding: "8px 0", writingMode: "vertical-rl", fontSize: 9, fontWeight: 800,
+                             letterSpacing: "0.1em", cursor: "pointer", borderRadius: 3, border: "1px solid var(--border-primary)",
+                             background: "var(--bg-tertiary)", color: "var(--text-secondary)" }}>A·B·C</button>
+          </div>
+          {renderSlot(slot)}
+        </React.Fragment>
+      );
+    }
+    return renderSlot(slot);
+  }); })()}
   {/* ── ADD A SOURCE CHANNEL (slice 2) ──────────────────────────────────────────────────
       The console gesture: press +, get a channel, pick its source. It is a UI affordance
       over a FIXED engine slot pool (SLOT_COUNT = 12, slice 1) — nothing about the realtime

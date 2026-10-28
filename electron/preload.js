@@ -431,6 +431,13 @@ contextBridge.exposeInMainWorld("ether", {
     state:   (stationId)        => ipcRenderer.invoke("patch:state", stationId),
     devices: ()                 => ipcRenderer.invoke("patch:devices"),
   },
+  // ── THE A/B/C VIEW (src/lib/deckView.ts) — collapsed into one strip or expanded, on this computer ──
+  boardView: {
+    getDecks: (stationId)       => ipcRenderer.invoke("board:decks-view-get", stationId),
+    setDecks: (stationId, view) => ipcRenderer.invoke("board:decks-view-set", stationId, view),
+    /** cb({ stationUuid, view }) on every change (the toggle in any window, or a show preset Take). Returns unsubscribe. */
+    onDecks:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("board:decks-view", h); return () => ipcRenderer.removeListener("board:decks-view", h); },
+  },
   // ── User / PIN security ─────────────────────────────────────
   users: {
     hashPin:   (pin) => ipcRenderer.invoke("user:hash-pin", pin),

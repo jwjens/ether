@@ -28,12 +28,16 @@ const ROTATION = new Set(["A", "B", "C"]);
 const SOURCE_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"];
 /** The keys that belong to THIS machine (electron/sync/handlers/station_config_kv.js LOCAL_ONLY_*). */
 const MACHINE_LOCAL_KEYS = ["audio_output_device", "aux_monitor_device", "pfl_cue_device"];
-const MACHINE_LOCAL_PREFIXES = ["mic_input_", "patch_"];
+const MACHINE_LOCAL_PREFIXES = ["mic_input_", "patch_", "board_view_"];
 const isMachineLocalKey = (k) => MACHINE_LOCAL_KEYS.includes(k) || MACHINE_LOCAL_PREFIXES.some(p => String(k).startsWith(p));
 
 /** The store keys a preset is read from and written to (all synced, station-scoped). */
 const DUCK_KEYS = { depthDb: "duck_depth_db", thresholdDb: "duck_threshold_db", attackMs: "duck_attack_ms", holdMs: "duck_hold_ms", releaseMs: "duck_release_ms" };
 const FLAT = "Flat";
+/** THE A/B/C VIEW (Jeff, 2026-10-28): collapsed into one strip or expanded. Per computer (machine-local key), and a preset
+ *  carries it (board.view.decks) so loading the preset sets it — written on this computer by main (planStoreWrites.local). */
+const BOARD_VIEW_KEY = "board_view_decks";
+const DECKS_VIEWS = ["collapsed", "expanded"];
 
 const num = (v) => { const n = typeof v === "number" ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -52,7 +56,12 @@ function sanitizePreset(p) {
   if (!p || typeof p !== "object") return { preset: null, stripped: ["(not a document)"] };
   for (const k of Object.keys(p)) if (!["v", "name", "stationUuid", "savedAt", "board", "builtIn"].includes(k)) note(k, isMachineLocalKey(k) ? "machine-local" : "unknown");
   const board = p.board && typeof p.board === "object" ? p.board : {};
-  for (const k of Object.keys(board)) if (!["channels", "master"].includes(k)) note(`board.${k}`, isMachineLocalKey(k) ? "machine-local" : "unknown");
+  for (const k of Object.keys(board)) if (!["channels", "master", "view"].includes(k)) note(`board.${k}`, isMachineLocalKey(k) ? "machine-local" : "unknown");
+  let view = null;
+  if (board.view !== undefined) {
+    if (board.view && DECKS_VIEWS.includes(board.view.decks)) view = { decks: board.view.decks };
+    else note("board.view", "not collapsed / expanded");
+  }
   const channels = {};
   const inCh = board.channels && typeof board.channels === "object" ? board.channels : {};
   for (const slot of Object.keys(inCh)) {
@@ -92,7 +101,7 @@ function sanitizePreset(p) {
   }
   return {
     preset: { v: 1, name: String(p.name || ""), stationUuid: String(p.stationUuid || ""), savedAt: p.savedAt || null,
-              ...(p.builtIn ? { builtIn: true } : {}), board: { channels, master } },
+              ...(p.builtIn ? { builtIn: true } : {}), board: { channels, master, ...(view ? { view } : {}) } },
     stripped,
   };
 }
@@ -133,7 +142,9 @@ function snapshotBoard({ name, stationUuid, deckConfigs, get, levels }) {
     ...(duckComplete ? { duck } : {}),
     ...(mon != null ? { monitorLevel: clamp(mon, 0, 4) } : {}),
   };
-  return sanitizePreset({ v: 1, name, stationUuid, savedAt: new Date().toISOString(), board: { channels, master } }).preset;
+  // The A/B/C view as this computer shows it (unset = expanded, as the board has always been).
+  const view = { decks: get(BOARD_VIEW_KEY) === "collapsed" ? "collapsed" : "expanded" };
+  return sanitizePreset({ v: 1, name, stationUuid, savedAt: new Date().toISOString(), board: { channels, master, view } }).preset;
 }
 
 /** aux_monitor_levels is a map { slot: level } (AuxMonitorSlots.tsx). Anything else reads as none. */
@@ -210,6 +221,8 @@ function storeWrites(preset, slots, withMaster) {
   }
   const out = { channels };
   if (withMaster) out.master = { ...((preset.board && preset.board.master) || {}) };
+  // The A/B/C view lands with the Take (with the master part): it is drawing, never a channel waiting to go OFF.
+  if (withMaster && preset.board && preset.board.view) out.view = { ...preset.board.view };
   return out;
 }
 
@@ -217,8 +230,8 @@ function storeWrites(preset, slots, withMaster) {
  * The exact writes main makes for an applied part (`storeWrites` output) — ONE planner, executed by main and asserted
  * by the smoke, so "a preset never touches a machine-local key" is checked over the real list, not a copy.
  *   get(key) — the station's current kv (for the aux_monitor_levels merge)
- * Returns { kv: [[key, value]], deck: [[slot, patch]] }. deck patches carry only enabled/type/kind/duck/duckable —
- * never channel_on (ruling 3).
+ * Returns { kv: [[key, value]], deck: [[slot, patch]], local: [[key, value]] }. deck patches carry only
+ * enabled/type/kind/duck/duckable — never channel_on (ruling 3). `local` is THIS computer's A/B/C view (set locally).
  */
 function planStoreWrites(stores, get) {
   const kv = [], deck = [];
@@ -243,7 +256,9 @@ function planStoreWrites(stores, get) {
     if (m.duck) for (const [f, key] of Object.entries(DUCK_KEYS)) if (m.duck[f] != null) kv.push([key, String(m.duck[f])]);
     if (m.monitorLevel != null) kv.push(["monitor_volume", String(m.monitorLevel)]);
   }
-  return { kv: kv.filter(([k]) => !isMachineLocalKey(k)), deck };
+  const local = [];
+  if (stores && stores.view && DECKS_VIEWS.includes(stores.view.decks)) local.push([BOARD_VIEW_KEY, stores.view.decks]);
+  return { kv: kv.filter(([k]) => !isMachineLocalKey(k)), deck, local };
 }
 
 // ── THE BLADE ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -423,5 +438,5 @@ class ShowBlade {
   _levelsChanged() { this.emit("boardlevels", { stationId: this.stationId, levels: { ...this.levels } }); }
 }
 
-module.exports = { SLOTS, SOURCE_SLOTS, ROTATION, MACHINE_LOCAL_KEYS, MACHINE_LOCAL_PREFIXES, isMachineLocalKey, DUCK_KEYS, FLAT,
+module.exports = { SLOTS, SOURCE_SLOTS, ROTATION, MACHINE_LOCAL_KEYS, MACHINE_LOCAL_PREFIXES, isMachineLocalKey, DUCK_KEYS, FLAT, BOARD_VIEW_KEY,
   sanitizePreset, snapshotBoard, parseRoomLevels, flatPreset, isLive, engineDoc, storeWrites, planStoreWrites, ShowBlade };
