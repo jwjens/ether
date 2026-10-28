@@ -359,3 +359,10 @@ before anything reaches a station. Each step is its own commit with a test, and 
 (plus updates to `help-remote-link.md`).
 
 **Stopped here, waiting for Jeff.**
+
+## Jeff's ruling (2026-10-27, verbatim)
+"Patch Bay: agreed order A outputs, A inputs, D, B, C. Before D makes machines easier to find, close the "same account"
+security gap. Don't start building any part until I say go."
+- Order: A outputs → A inputs → D → B → C.
+- Before D: close the "same account" gap (`docs/multitenancy-audit.md` H5, plus M1).
+- Nothing is built until Jeff says go.
