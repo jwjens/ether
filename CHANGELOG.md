@@ -1,3 +1,13 @@
+## [4.6.69] — unreleased
+
+### Fixed
+
+- **Opening Ether shows the account sign-in screen first, every time, as before 4.6.68.** A computer that keeps a
+  sign-in no longer skips it. While Ether runs it still renews the sign-in in the background and never signs anyone out;
+  a restart while on air still comes straight back.
+- **Settings opens at once.** Opening it froze Ether for up to 10 seconds while the multi-machine sync numbers were
+  counted on the app's main thread. They are now counted in the background and fill in when ready ("counting…").
+
 ## [4.6.68] — unreleased
 
 ### Added
