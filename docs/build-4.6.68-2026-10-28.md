@@ -77,3 +77,21 @@ Checked from OVEVENTS with its own sign-in, Jeff's account only (`relay-live-che
   left one session record, which expires on its own at 2026-10-29T13:41Z.
 
 Still UNVERIFIED: audio between two real computers through it (first real Link on 4.6.68).
+
+## Rebuild with the sign-in fix (2026-10-29)
+
+Jeff: "Put the account sign-in screen back exactly as it was before today: when Ether opens, the sign-in screen comes
+first. Nothing else changes." → `2f3126a`. Then: "finish the build".
+
+- **Installer:** `C:\openair\dist-electron\Ether Setup 4.6.68.exe` — 216,406,196 bytes, sha256 `1cea97773cc82402…`,
+  built 08:37 local from `2f3126a` (replaces the 2026-10-28 file, sha256 `f927823de9448302…`, which is the one installed
+  on OVEVENTS this morning). Not installed anywhere.
+- Gates on `2f3126a`: tsc 0; vitest 152 files / 1,253 tests. No engine or sync change since the full gate run.
+- Engine fingerprint: PASS (`4c5e4ca6a1c3bd65`, built and packaged).
+- Bundle: the start-up skip (`isSetUp`) is gone; the on-air restart path (`account:was-on-air`) is present; the Remember
+  me tooltip reads "Keep this computer signed in while Ether runs".
+- Side-by-side launch (stripped copy as before; Jeff's installed Ether running alongside, untouched):
+  - station 2 (halloVeen): `queue=0` → FAIL — not the build: halloVeen's log for today starts at 16:00Z, so the 15:xx
+    hour has no rows (read-only check of the live database).
+  - station 1 (Open Format): `[SMOKE] PASS … fill_station=1 queue=20 no_account=true`; engine `logreader refill: 20
+    pending from log (mode=behind, queue=20)`; exit 0 after 25 s. Test processes stopped, copy deleted.
