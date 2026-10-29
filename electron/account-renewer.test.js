@@ -1,6 +1,7 @@
 // Sign-in Phase 1 on the desktop (Jeff, 2026-10-28): a running station stays signed in forever; if renewal can't happen
-// the station runs as normal and only account features pause; the sign-in screen appears only on a brand-new computer,
-// after Sign Out, or after the computer is removed. electron/account-renewer.js + account-session.js + src/lib/startupGate.ts.
+// the station runs as normal and only account features pause. Opening Ether shows the account sign-in screen first, as
+// before 2026-10-28 (Jeff: "Put the account sign-in screen back exactly as it was before today: when Ether opens, the
+// sign-in screen comes first."). electron/account-renewer.js + account-session.js.
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -106,29 +107,27 @@ describe("renewal", () => {
   });
 });
 
-describe("start-up: a set-up computer starts straight to the station", () => {
-  it("a computer with an EXPIRED sign-in starts straight to the station", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ether-start-"));
-    const t0 = Date.parse("2026-10-28T12:00:00Z");
-    createAccountSession({ safeStorage: fakeSafe(), dir: () => dir, now: () => t0 }).set(pass(t0 + 12 * 3600000));
-    // …two days later, Ether restarts: the kept pass has long expired, and nothing could renew it.
-    const later = createAccountSession({ safeStorage: fakeSafe(), dir: () => dir, now: () => t0 + 2 * 86400000 });
-    expect(later.get()).toBe(null);                // expired: account features would pause
-    expect(later.isSetUp()).toBe(true);            // …but the computer is set up
-    const { startupScreen } = await import("../src/lib/startupGate");
-    expect(startupScreen({ setUp: later.isSetUp() })).toBe("station");
+describe("start-up: opening Ether shows the account sign-in screen first", () => {
+  // Jeff (2026-10-28): "Put the account sign-in screen back exactly as it was before today: when Ether opens, the sign-in
+  // screen comes first." A kept sign-in no longer skips it; only the paths that existed before today do (a restart while
+  // on air, and the app's own relaunch carrying the session).
+  const app = () => fs.readFileSync(path.join(__dirname, "..", "src", "App.tsx"), "utf8");
+  const code = () => app().split("\n").filter(l => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  it("a kept sign-in does not skip the sign-in screen", () => {
+    expect(code()).not.toMatch(/isSetUp/);
+    expect(code()).not.toMatch(/startupScreen|startupGate/);
+    expect(fs.existsSync(path.join(__dirname, "..", "src", "lib", "startupGate.ts"))).toBe(false);
   });
-  it("only a brand-new computer, Sign Out, or a removed computer shows the sign-in screen", async () => {
-    const { startupScreen } = await import("../src/lib/startupGate");
-    expect(startupScreen({ setUp: false })).toBe("sign-in");
-    expect(startupScreen({ setUp: true })).toBe("station");
+  it("only the restart while on air and the app's own relaunch come back signed in at start-up", () => {
+    const src = code();
+    const start = src.indexOf('ether.invoke("account:was-on-air")');
+    const end = src.indexOf("setFirstRunChecked(true);", start);
+    expect(start).toBeGreaterThan(0);
+    const startup = src.slice(start, end);
+    expect((startup.match(/setAccountSignedIn\(true\)/g) || []).length).toBe(2);
+    expect(startup).toMatch(/account:resume-session/);
   });
-  it("the app asks this before deciding the first screen, and nothing else brings the sign-in screen back", () => {
-    const app = fs.readFileSync(path.join(__dirname, "..", "src", "App.tsx"), "utf8");
-    const at = app.indexOf('startupScreen({ setUp: !!(await (window as any).ether.accountSession?.isSetUp?.()) }) === "station"');
-    expect(at).toBeGreaterThan(0);
-    expect(at).toBeLessThan(app.indexOf("setFirstRunChecked(true);", at));
-    const strip = app.split("\n").filter(l => !/^\s*(\/\/|\*)/.test(l)).join("\n");
-    expect((strip.match(/setAccountSignedIn\(false\)/g) || []).length).toBe(0);
+  it("while Ether runs, nothing signs anyone out", () => {
+    expect((code().match(/setAccountSignedIn\(false\)/g) || []).length).toBe(0);
   });
 });

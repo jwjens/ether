@@ -128,7 +128,6 @@ import { appShortcut } from "./lib/appShortcuts";
 import { libraryDeckActions, DeckLoadNoticeBar } from "./lib/libraryDeckActions";
 import { useMicMigration } from "./hooks/useMicMigration";
 import { OPEN_PREFS_KEY } from "./hooks/useMicInputs";
-import { startupScreen } from "./lib/startupGate";
 import TrackEditor from "./components/TrackEditor";
 import AboutPanel from "./components/AboutPanel";
 import ListenerAnalytics from "./components/ListenerAnalytics";
@@ -1049,9 +1048,6 @@ export default function App() {
       // A continuation self-relaunch (cloud install / update / reload) carries the signed-in session
       // so the app's OWN relaunch doesn't bounce back to sign-in in a loop. Only a recent one counts.
       try { if (await (window as any).ether.invoke("account:resume-session")) setAccountSignedIn(true); } catch {}
-      // A SET-UP COMPUTER STARTS STRAIGHT TO THE STATION (Jeff, 2026-10-28; src/lib/startupGate.ts): a kept sign-in —
-      // valid or expired — is enough. Renewal happens in the background; if it cannot, only account features pause.
-      try { if (startupScreen({ setUp: !!(await (window as any).ether.accountSession?.isSetUp?.()) }) === "station") setAccountSignedIn(true); } catch {}
       setFirstRunChecked(true);
       consoleLog("system", "ether started — engine ready");
     })();

@@ -1248,7 +1248,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
               <input type="email" autoFocus value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthErr(''); }} placeholder="Email address" style={authInput} />
               <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthErr(''); }} onKeyDown={e => { if (e.key === 'Enter') submit(); }} placeholder={authMode === 'signup' ? 'Create a password (8+ characters)' : 'Password'} style={authInput} />
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "rgba(255,255,255,0.75)", cursor: "pointer" }}
-                     title="Keep this computer signed in. Ether starts straight to the station; Sign Out ends it.">
+                     title="Keep this computer signed in while Ether runs; Sign Out ends it.">
                 <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)} /> Remember me
               </label>
               {authMode === 'signup' && (

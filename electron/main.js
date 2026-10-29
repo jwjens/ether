@@ -4640,7 +4640,7 @@ ipcMain.handle("account:session-start", (_, s, remember) => {
   try { const r = AccountSession.setSession(s, { remember: remember !== false }); if (r.ok) accountRenewer().signedIn(); return r; }
   catch (e) { return { ok: false, error: e.message }; }
 });
-// START-UP: has this computer been set up (a sign-in is kept, valid or not)? Then it starts straight to the station.
+// Has this computer kept a sign-in (valid or not)? Informational only: opening Ether always shows the sign-in screen first.
 ipcMain.handle("account:is-set-up", () => { try { return AccountSession.isSetUp(); } catch { return false; } });
 ipcMain.handle("account:session-status", () => { try { return accountRenewer().status(); } catch { return { state: "none" }; } });
 // SIGN IN AGAIN (Health Monitor → Account), while the station keeps running: the same account only — another account is
