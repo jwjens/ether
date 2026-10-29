@@ -58,4 +58,29 @@ function categoryHealth(db, id) {
   return { artistSepMin, rows };
 }
 
-module.exports = { scheduleGet, categoryHealth };
+/** sync:preflight-journal — the sync journal's counts for Settings → multi-machine sync. Moved off main (Jeff, 2026-10-29:
+ *  "opening Settings still freezes Ether for at least 5 seconds"): byOrigin has no index to use and reads the whole
+ *  journal (12.8 s cold on a 200,695-row journal). `excluded` = the tables push never sends (resolved by main from the
+ *  registry). TWO NUMBERS, NEVER ONE: `pending` counts every row stamped pending — including tables push excludes — and
+ *  `pendingPushable` applies the push query's own exclusion list, the only one that means "waiting to go up";
+ *  `pendingJournalOnly` names the remainder rather than hiding it (docs/one-switch-2026-09-09.md §1). */
+function syncJournal(db, excluded) {
+  const q = (sql, ...a) => { try { return db.prepare(sql).all(...a); } catch (e) { return [{ error: e.message }]; } };
+  const ex = Array.isArray(excluded) ? excluded.map(String) : [];
+  const ph = ex.map(() => '?').join(', ');
+  const pending = q("SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending'")[0]?.n ?? null;
+  return {
+    pending,
+    pendingPushable: ex.length === 0 ? pending
+      : q(`SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending' AND table_name NOT IN (${ph})`, ...ex)[0]?.n ?? null,
+    pendingJournalOnly: ex.length === 0 ? 0
+      : q(`SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending' AND table_name IN (${ph})`, ...ex)[0]?.n ?? null,
+    total: q("SELECT COUNT(*) n FROM mutations")[0]?.n ?? null,
+    byStatus: q("SELECT sync_status, COUNT(*) n FROM mutations GROUP BY sync_status ORDER BY n DESC"),
+    // origin all 'local' means nothing has ever been RECEIVED, which push counts alone hide.
+    byOrigin: q("SELECT origin, COUNT(*) n FROM mutations GROUP BY origin ORDER BY n DESC"),
+    songDeletes: q("SELECT COUNT(*) n FROM mutations WHERE table_name='songs' AND LOWER(op)='delete'")[0]?.n ?? null,
+  };
+}
+
+module.exports = { scheduleGet, categoryHealth, syncJournal };

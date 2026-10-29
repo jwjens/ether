@@ -151,7 +151,8 @@ console.log("\n== 5. a restore in progress is not a fault ==");
 
 console.log("\n== 6. the pending count is not the pushable count ==");
 {
-  const main = code("electron/main.js");
+  // The journal counts are read on the screen-read worker since 2026-10-29 (sync:preflight-journal → syncJournal).
+  const main = code("electron/screen-read-queries.js");
   if (/pendingPushable/.test(main)) pass("sync:preflight exposes pendingPushable");
   else fail("sync:preflight does not expose pendingPushable — the panel can only show a number that counts unsendable rows");
 

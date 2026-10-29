@@ -13835,16 +13835,18 @@ ipcMain.handle('sync:clear-pending', () => {
   }
 });
 
+// sync:preflight — the instant part only, so Settings is usable the moment it opens (Jeff, 2026-10-29: "opening Settings
+// still freezes Ether for at least 5 seconds"). stall-sense named it: `ipc sync:preflight 8836 ms` / `9962 ms` on the
+// installed 4.6.68, held in its journal counts. The `mutations` journal (200,695 rows, 713 MB database on OVEVENTS) has no
+// index on `origin`, so byOrigin alone read the whole table: 12.8 s cold, 1.3 s warm — all of it on main's thread, which
+// carries the board, the announcement tick and every engine command. The journal counts now come from
+// sync:preflight-journal, on the screen-read worker's own read-only connection (electron/screen-read-queries.js
+// syncJournal); the panel fills them in when they arrive. Nothing here reads the journal.
 ipcMain.handle('sync:preflight', () => {
   try {
     const db = getDb();
     const q = (sql, ...a) => { try { return db.prepare(sql).all(...a); } catch (e) { return [{ error: e.message }]; } };
-    // Station-scoped, like the boot path — an unscoped read here reported a DIFFERENT station's
-    // value than the one the toggle wrote, which is what made the panel say "stored: false"
-    // immediately after a successful write.
-    const kv = (key) => syncFlagForActiveStation(db, key);
     const scheduler = app._syncScheduler || null;
-    const pending = q("SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending'")[0]?.n ?? null;
     return {
       ok: true,
       // Names WHICH machine this dump came from — the whole point is comparing two of them.
@@ -13863,50 +13865,26 @@ ipcMain.handle('sync:preflight', () => {
         engineUuidIdentity: scheduler ? !!scheduler._engineOpts?.uuidIdentity : null,
       },
       schedulerRunning: scheduler ? !!scheduler._running : false,
-      mutations: {
-        pending,
-        // TWO NUMBERS, NEVER ONE. `pending` counts every row with sync_status='pending' — and the
-        // writer (sync/mutation-writer.js:349-350) stamps that on EVERY journalled write, including
-        // tables the push query then excludes (sync/sync-engine.js:544). On this machine that made
-        // "PENDING MUTATIONS 79,341" out of 79,341 generated_schedule rows that can never be sent,
-        // with a progress bar reading 49% while the truth was "finished". The engine was idle and
-        // correct; the number was measuring the wrong set.
-        //
-        // pendingPushable applies the engine's own exclusion list, so it answers the question an
-        // operator actually asks: is anything waiting to go up.
-        // docs/one-switch-2026-09-09.md §1.
-        pendingPushable: (() => {
-          try {
-            const { REGISTRY } = require('./sync/synced-tables');
-            const excluded = Object.entries(REGISTRY)
-              .filter(([, e]) => e.syncExcluded === true || e.scope === 'local-only')
-              .map(([wireName]) => wireName);
-            if (excluded.length === 0) return pending;
-            const ph = excluded.map(() => '?').join(', ');
-            return q(`SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending' AND table_name NOT IN (${ph})`, ...excluded)[0]?.n ?? null;
-          } catch { return null; }
-        })(),
-        // What the unpushable remainder is, so the panel can name it rather than hide it.
-        pendingJournalOnly: (() => {
-          try {
-            const { REGISTRY } = require('./sync/synced-tables');
-            const excluded = Object.entries(REGISTRY)
-              .filter(([, e]) => e.syncExcluded === true || e.scope === 'local-only')
-              .map(([wireName]) => wireName);
-            if (excluded.length === 0) return 0;
-            const ph = excluded.map(() => '?').join(', ');
-            return q(`SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending' AND table_name IN (${ph})`, ...excluded)[0]?.n ?? null;
-          } catch { return null; }
-        })(),
-        total: q("SELECT COUNT(*) n FROM mutations")[0]?.n ?? null,
-        byStatus: q("SELECT sync_status, COUNT(*) n FROM mutations GROUP BY sync_status ORDER BY n DESC"),
-        // origin all 'local' means nothing has ever been RECEIVED, which push counts alone hide.
-        byOrigin: q("SELECT origin, COUNT(*) n FROM mutations GROUP BY origin ORDER BY n DESC"),
-        songDeletes: q("SELECT COUNT(*) n FROM mutations WHERE table_name='songs' AND LOWER(op)='delete'")[0]?.n ?? null,
-      },
     };
   } catch (e) {
     console.error('[sync:preflight]', e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+// sync:preflight-journal — the journal counts for the panel (pending, pendingPushable, pendingJournalOnly, total, byStatus,
+// byOrigin, songDeletes), counted on the screen-read worker; main only waits on its message. The tables push excludes
+// come from the registry here (no database), so the worker applies the engine's own exclusion list.
+ipcMain.handle('sync:preflight-journal', async () => {
+  try {
+    if (!_screenReads) return { ok: false, error: 'the database is not open yet' };
+    const { REGISTRY } = require('./sync/synced-tables');
+    const excluded = Object.entries(REGISTRY)
+      .filter(([, e]) => e.syncExcluded === true || e.scope === 'local-only')
+      .map(([wireName]) => wireName);
+    return { ok: true, mutations: await _screenReads.fn('syncJournal', excluded) };
+  } catch (e) {
+    console.error('[sync:preflight-journal]', e.message);
     return { ok: false, error: e.message };
   }
 });

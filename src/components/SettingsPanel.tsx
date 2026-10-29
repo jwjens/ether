@@ -1157,15 +1157,30 @@ function MultiMachineSyncSection() {
 
   const call = <T,>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 
+  // TWO STEPS, SO SETTINGS NEVER WAITS (Jeff, 2026-10-29: "opening Settings still freezes Ether for at least 5 seconds"):
+  // sync:preflight answers at once; the journal counts (a 12.8 s read of the whole journal on OVEVENTS, which used to run
+  // on main's thread) come from sync:preflight-journal on the screen-read worker and fill in when they arrive.
+  const [counting, setCounting] = useState(false);
   const refresh = async () => {
     setBusy("preflight");
+    let ok = false;
     try {
       const r = await call<SyncPreflight>("sync:preflight");
       setPf(r);
+      ok = !!r?.ok;
       if (!r?.ok) setMsg(`✗ ${r?.error || "preflight failed"}`);
     } catch (e: any) { setPf(null); setMsg(`✗ ${e?.message || String(e)}`); }
     finally { setBusy(null); }
+    if (!ok) return;
+    setCounting(true);
+    try {
+      const j = await call<{ ok: boolean; mutations?: SyncPreflight["mutations"]; error?: string }>("sync:preflight-journal");
+      if (j?.ok) setPf(p => (p ? { ...p, mutations: j.mutations } : p));
+      else setMsg(`✗ journal counts: ${j?.error || "failed"}`);
+    } catch (e: any) { setMsg(`✗ journal counts: ${e?.message || String(e)}`); }
+    finally { setCounting(false); }
   };
+  const dash = counting ? "counting…" : "—";
 
   useEffect(() => { refresh(); }, []);
 
@@ -1267,10 +1282,10 @@ function MultiMachineSyncSection() {
               <div style={lbl}>Waiting to sync</div>
               <div style={{ fontSize: 18, fontWeight: 800, fontVariantNumeric: "tabular-nums",
                             color: (pf.mutations?.pendingPushable ?? 0) > 0 ? "#fbbf24" : "#4ade80" }}>
-                {pf.mutations?.pendingPushable?.toLocaleString() ?? "—"}
+                {pf.mutations?.pendingPushable?.toLocaleString() ?? dash}
               </div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                of {pf.mutations?.total?.toLocaleString() ?? "—"} journalled
+                of {pf.mutations?.total?.toLocaleString() ?? dash} journalled
                 {status?.lastSyncAt && <> · last sync {new Date(status.lastSyncAt).toLocaleTimeString()}</>}
               </div>
               {/* Progress against the REAL backlog, and only while there is one. Measured against
@@ -1307,11 +1322,11 @@ function MultiMachineSyncSection() {
               {/* Origin, not pending. An install can have a clean queue and still never have taken in
                   a single row from a peer — only this says so. */}
               <div style={lbl}>Ever received</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: everReceived ? "#4ade80" : "#fbbf24" }}>
-                {everReceived ? "yes" : "never"}
+              <div style={{ fontSize: 18, fontWeight: 800, color: !pf.mutations ? "var(--text-tertiary)" : everReceived ? "#4ade80" : "#fbbf24" }}>
+                {!pf.mutations ? dash : everReceived ? "yes" : "never"}
               </div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                {(pf.mutations?.byOrigin || []).map(o => `${o.origin}: ${o.n.toLocaleString()}`).join(" · ") || "—"}
+                {(pf.mutations?.byOrigin || []).map(o => `${o.origin}: ${o.n.toLocaleString()}`).join(" · ") || dash}
               </div>
             </div>
           </div>
@@ -1374,7 +1389,7 @@ function MultiMachineSyncSection() {
         <button
           style={{ ...btn, borderColor: "#a0522d", color: clearArmed ? "#e0a060" : "var(--text-secondary)" }}
           onClick={() => { setClearArmed(a => !a); setClearTyped(""); setMsg(""); }}
-          disabled={busy !== null || !pf?.ok}
+          disabled={busy !== null || !pf?.ok || !pf?.mutations}
           title="Discard the queued sync backlog and make this moment the baseline"
         >{busy === "baseline" ? "CLEARING…" : "CLEAR PENDING…"}</button>
       </div>

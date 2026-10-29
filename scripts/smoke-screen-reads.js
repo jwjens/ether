@@ -79,6 +79,15 @@ const HEAVY = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WH
   ok(JSON.stringify(g) === JSON.stringify(Q.scheduleGet(local, sid, from, to)), `D: schedule:get from the worker equals the in-thread read (${g.length} rows)`);
   const h = await host.fn("categoryHealth", sid);
   ok(JSON.stringify(h) === JSON.stringify(Q.categoryHealth(local, sid)), `D: schedule:categoryHealth from the worker equals the in-thread read (${h.rows.length} categories)`);
+  // Settings → multi-machine sync's journal counts (sync:preflight-journal, 2026-10-29): the worker answers them, and
+  // main's thread stays on time while it counts (the counts took 8.8–10 s on main in the installed 4.6.68).
+  const ex = ["generated_schedule", "install_secrets_kv", "monitor_routing"];
+  let ticks = 0; const tick = setInterval(() => { ticks++; }, 5);
+  const t0 = Date.now();
+  const sj = await host.fn("syncJournal", ex);
+  const ms = Date.now() - t0; clearInterval(tick);
+  ok(JSON.stringify(sj) === JSON.stringify(Q.syncJournal(local, ex)), `D: the sync journal counts from the worker equal the in-thread read (${sj.total} journalled, ${ms} ms off main)`);
+  ok(ms < 20 || ticks > 0, `D: main's timers kept running while the worker counted (${ticks} ticks in ${ms} ms)`);
 
   // E · the worker cannot write.
   let werr = null;
