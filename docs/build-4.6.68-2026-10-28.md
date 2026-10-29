@@ -66,3 +66,14 @@ engine re-baseline · the release check that the engine is built from the app's 
 - Two real computers through the Lightsail relay; OV's network for outbound UDP 9790 (the echo test from OVEVENTS passed
   600/600).
 - The Patch Bay inputs grid on real interface inputs; sign-in renewal across a real 15-minute pass on a running station.
+
+## Relay live on Lightsail (Jeff, 2026-10-28: "relay installed on Lightsail, and ETHER_RELAY_SECRET added to Railway")
+
+Checked from OVEVENTS with its own sign-in, Jeff's account only (`relay-live-check.js`, scratch):
+- Backend `GET /api/link/relay/sessions`: **200** `{"relay_host":"44.244.52.207","relay_port":9790,"sessions":[]}` (was 503).
+- A forged ticket to 44.244.52.207:9790: relay answered **ACK 1** (refused) — up, reachable on UDP 9790, checking tickets.
+- A real ticket from `POST /api/link/relay/session` (this computer → a second machine on the same account): **ACK 2**
+  (accepted, waiting for the other side) — the Railway secret and the Lightsail secret match. No audio sent. The check
+  left one session record, which expires on its own at 2026-10-29T13:41Z.
+
+Still UNVERIFIED: audio between two real computers through it (first real Link on 4.6.68).
