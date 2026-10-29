@@ -20,6 +20,7 @@ const require_ = createRequire(import.meta.url);
 const B = require_("../../audiod/board-state.js");
 const { createBoardWatch } = require_("../../electron/board-watch.js");
 const { DatabaseSync } = require_("node:sqlite");
+const KV = require_("../../electron/sync/handlers/station_config_kv.js");
 
 const SID = 2;
 
@@ -27,16 +28,18 @@ function savedHalloveen() {
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE stations (id INTEGER PRIMARY KEY, deleted_at TEXT);
            CREATE TABLE deck_configs (station_id INTEGER, slot TEXT, type TEXT, kind TEXT, enabled INTEGER, channel_on INTEGER, duck INTEGER, duckable INTEGER, deleted_at TEXT);
-           CREATE TABLE station_config_kv (station_id INTEGER, key TEXT, value TEXT, deleted_at TEXT);`);
+           CREATE TABLE station_config_kv (station_id INTEGER, key TEXT, value TEXT, uuid TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT);`);
   db.exec(`INSERT INTO stations (id) VALUES (1), (2), (3), (4), (9);`);
   const dc = db.prepare("INSERT INTO deck_configs VALUES (?, ?, ?, ?, 1, ?, ?, ?, NULL)");
   for (const sid of [1, 2, 3, 4, 9]) {
     for (const r of [["A", "music", "", 1, 0, 1], ["B", "music", "", 1, 0, 1], ["C", "music", "", 1, 0, 1],
                      ["D", "source", "announcement", 1, 1, 1], ["E", "source", "jukebox", 1, 0, 1], ["F", "source", "mic", 1, 1, 0]]) dc.run(sid, ...r);
   }
-  const kv = db.prepare("INSERT INTO station_config_kv VALUES (?, ?, ?, NULL)");
+  // Through the sanctioned writer (it names station_id and uuid), with the real table's columns — never a hand-rolled
+  // INSERT into a table shaped unlike the real one (scripts/smoke-one-switch.js §9).
+  const kv = { run: (sid: number, key: string, value: string) => KV.stationConfigKvSetLocal(db, sid, key, value) };
   // halloVeen (2) as the 20:26 connect pass read it: station MONITOR 0.68. The others as on this box (0).
-  for (const [sid, mon] of [[1, "0"], [2, "0.68"], [3, "0"], [4, "0"], [9, "0"]]) {
+  for (const [sid, mon] of [[1, "0"], [2, "0.68"], [3, "0"], [4, "0"], [9, "0"]] as Array<[number, string]>) {
     kv.run(sid, "monitor_volume", mon);
     kv.run(sid, "master_monitor_volume", "0.2320675105485232");
     kv.run(sid, "board_levels", JSON.stringify({ A: 0.8, B: 0.8, C: 0.8, D: 0.7, E: 0.4, F: 1, master: 0.9 }));
