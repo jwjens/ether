@@ -189,7 +189,7 @@ today: every Park login can do everything the page offers).
 | Program Log: skip / play next during the shift | yes | yes | yes | no | proposed |
 | Carts: edit the wall (assign, rename, clear) | yes | yes | no | no | proposed |
 | Carts: fire | yes | yes | yes | yes (carts on the wall) | proposed; Park: today |
-| Announcements: edit, and their times | yes | yes | no | no (view only) | proposed; Park: today |
+| Announcements: edit, and their times | yes | yes | no | **yes: their times** (Jeff, 2026-10-29) | proposed; Park: Jeff's correction |
 | Closing time (Park) | yes | yes | no | yes | proposed; Park: today |
 | Backup & Restore: back up now, download | yes | no | no | no | proposed |
 | Backup & Restore: restore on this computer | yes | no | no | no | proposed |
@@ -199,3 +199,7 @@ today: every Park login can do everything the page offers).
 | Master level and mute | yes | yes | yes | yes | proposed; Park: today |
 | Park: Listen | — | — | — | yes | Park: today |
 | Park: Hold to talk | — | — | — | yes | Park: today |
+
+**Correction (Jeff, 2026-10-29, verbatim):** "Announcements: edit, and their times    yes    yes    no    view only this is
+incorrect they do need to be able to edit times". The Park page login column was "no (view only)"; it is now **yes: their
+times**. Whether a Park login may also edit an announcement itself (not only its times) was not stated: open for Jeff.
