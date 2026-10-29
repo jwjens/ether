@@ -34,7 +34,24 @@ Tests: `npm test` **230/230**.
 - Listener-facing reads (the public page, the stream) are **not** behind the plan check yet: turning a lapsed station's
   listener page off is the hosted-stream phase (P5).
 
-## Before deploy — what it does to real licenses: UNVERIFIED until Jeff runs the preview
+## Before deploy — what it does to real licenses (Jeff ran the read-only preview, 2026-10-29)
+
+16 licenses. **Key check changes for two, both lifetime, both refused today → accepted after** (stale `expires_at`;
+nothing written):
+- **22 — djdeniro@gmail.com** (`station_lifetime`, expires_at 2026-07-17) — Jeff's own.
+- **26 — joostpeters@gmail.com** (`station_lifetime`, expires_at 2026-07-29) — a customer's lifetime license.
+
+**Licenses 21 (netgeak@gmail.com) and 23 (cristianmalliani@gmail.com): no change** — refused today, refused after.
+21 reads as Local (Founding), 23 as Station lapsed; in shadow mode that only lands in the report.
+
+Everyone else: unchanged (24 jensj@opportunityvillage.org and 28 maganaent@gmail.com lifetime, accepted; 27
+medan27171@bora4d.com lapsed, refused; 29–37 trials ending 2026-11-02 … 11-11, accepted, and from now on each gets the
+7-day grace after its end).
+
+**Held for Jeff:** 26 is a lifetime license ("never touch … any lifetime license"). No row is written, but its access
+changes (it regains cloud). Not deployed until Jeff says yes or no.
+
+### (earlier text)
 Read-only, prints every license with its email, its plan under the new rules, and whose key check changes:
 `railway run --service Postgres node "<scratchpad>/diag-plan-preview.js"`.
 In shadow mode nobody is refused; the only behaviour change on deploy is commit `7b05fc7` (keys in grace, and lifetime
