@@ -36,9 +36,15 @@ pushed, nothing deployed.
 - Tests: `src/lib/email-verify.test.js` (10), `link-pairing.test.js` (+1), and the real-route sign-up → link → verified
   test in `test/server-boots.test.js`.
 
-**Before deploy 1, UNKNOWN:** how many people would lose member access (an unverified email holding a membership in
-someone else's account). The read-only check was blocked by the permission system; Jeff runs:
-`railway run --service ether-backend node "<scratchpad>/diag-unverified-members.js"` (SELECT only, read-only transaction).
+**Before deploy 1, who loses member access — checked (Jeff ran it, 2026-10-29; read-only transaction,
+`railway run --service Postgres`, host ballast.proxy.rlwy.net):**
+```
+users: { users: 17, verified: 6 }
+active memberships that would stop counting: 0
+all active memberships: 0
+```
+**Nobody loses access:** production has no active memberships at all. The 11 unverified users keep everything they have
+today; only their old confirmation links (if any are still unused) stop working. Licenses 21 and 23: nothing affected.
 
 **Web page follow-ups (ether-signup, not changed):** `Verify.tsx` shows "invalid or has already been used" for an
 expired link too; there is no "send a new link" button (the resend route has no door yet).
