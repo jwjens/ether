@@ -189,8 +189,8 @@ today: every Park login can do everything the page offers).
 | Program Log: skip / play next during the shift | yes | yes | yes | no | proposed |
 | Carts: edit the wall (assign, rename, clear) | yes | yes | no | no | proposed |
 | Carts: fire | yes | yes | yes | yes (carts on the wall) | proposed; Park: today |
-| Announcements: edit, and their times | yes | yes | no | **yes: their times** (Jeff, 2026-10-29) | proposed; Park: Jeff's correction |
-| Closing time (Park) | yes | yes | no | yes | proposed; Park: today |
+| Announcements: edit (content and times) | yes | yes | no | no (view only) | Jeff, 2026-10-29 |
+| Closing time | yes | yes | yes | yes | Jeff, 2026-10-29 (the announcements tied to it move with it) |
 | Backup & Restore: back up now, download | yes | no | no | no | proposed |
 | Backup & Restore: restore on this computer | yes | no | no | no | proposed |
 | Backup & Restore: "Send this restore to every machine" | yes | no | no | no | proposed |
@@ -200,6 +200,10 @@ today: every Park login can do everything the page offers).
 | Park: Listen | — | — | — | yes | Park: today |
 | Park: Hold to talk | — | — | — | yes | Park: today |
 
-**Correction (Jeff, 2026-10-29, verbatim):** "Announcements: edit, and their times    yes    yes    no    view only this is
-incorrect they do need to be able to edit times". The Park page login column was "no (view only)"; it is now **yes: their
-times**. Whether a Park login may also edit an announcement itself (not only its times) was not stated: open for Jeff.
+**Correction (Jeff, 2026-10-29).** First, verbatim: "Announcements: edit, and their times    yes    yes    no    view only
+this is incorrect they do need to be able to edit times". Then settled as **two separate rows** (verbatim from the relayed
+reply): "Closing time — yes yes yes yes. Announcements: edit (content and times) — yes yes no no (view only). When someone
+changes closing time, the announcements tied to it, like "30 minutes to close", move with it. That's part of changing
+closing time, not editing announcements, so everyone can do it." So: a Jock can now change closing time (was no), and the
+times that need to move are moved by closing time, not by editing announcements. A Park login stays view only for
+announcements.
