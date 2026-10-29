@@ -2,6 +2,20 @@
 
 ### Added
 
+- **Patch Bay (☰ → Patch Bay):** one place for each station's outputs — Master, Cue (PFL) and Aux to any device and
+  channel pair, up to four devices at once — and its inputs: device inputs, Park mics and the Remote Link feed patched
+  to source faders. The fader's SOURCE dropdown and the grid are the same setting. A missing device is named in red and
+  never replaced by another; the station keeps running on its own clock. Existing devices carry over.
+- **Remote Link through Ether's relay:** pick the computer and station; no address, port or router setup. The receiving
+  computer allows a new sender once and remembers it. Typing an address stays as an advanced option.
+- **Stays signed in:** a computer that is set up starts straight to the station, renews its sign-in in the background
+  while it runs, and asks for a sign-in only on a new computer, after Sign Out, or after it is removed from the account.
+  If renewal can't happen, only account features pause (Health Monitor → Account sign-in). Remember me is on by default.
+- **The board:** real console fader caps; double-click a fader for 0 dB; strips never get cut off — the board scrolls
+  sideways with Master Out pinned and a FADERS overview; decks A, B and C can collapse into one strip that follows the
+  playing deck (saved per computer and in show presets).
+- **Settings** (was Preferences) has its own sections for Remote Link, Jukebox, Park Page and Audio Devices.
+
 - **Preferences → Links:** every public page of your account and its stations at its real address (station player,
   embed player, account page, jukebox request page and lobby screen, Park page, sign-up, the web apps, the website and
   downloads), one section per type, each with Open and Copy. Built from the sites' own pages and your account's
@@ -9,6 +23,9 @@
 
 ### Fixed
 
+- **The sign-in is no longer stored in the station database or in any backup**; it is kept in this computer's protected
+  storage.
+- **The installer's audio engine must be built from the app's own engine source** — the build fails otherwise.
 - **The board's remove button (−) takes a source channel off in one click, patched or not.** A channel with a Link input
   or a Park mic patched on it used to stay on the board. Removing it now clears its patch, releases the Link, and stops
   the channel, and it stays removed. Nothing else on the board or on air is touched. If the engine refuses, the reason
