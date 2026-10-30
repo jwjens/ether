@@ -123,3 +123,12 @@ anyone out or shows a sign-in screen. Both are said.
 **Resolved (Jeff, 2026-10-29):** CLAUDE.md rule 1 now reads: when Ether is opened, the account sign-in screen comes
 first; while Ether is running, nobody is ever signed out and no sign-in screen ever appears, because the sign-in renews
 silently in the background.
+
+## 2026-10-30 — e836590 goes into 4.6.69
+
+**Jeff (verbatim):** "Include e836590 in 4.6.69."
+
+e836590 (the desktop accepts the `unlimited` plan key) is after ad3871d, so the tag goes on a release/1019 commit that
+contains it. It is a code change after the earlier local build, so before tagging: `npx tsc --noEmit`, `npm run build`,
+local `electron:build:win -- --publish never`, packaged smoke on that exact artifact. Release-notes line to add:
+"Ether recognizes the new Unlimited plan."
