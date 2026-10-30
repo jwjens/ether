@@ -1555,7 +1555,9 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
   };
 
   const removeShow = async (id: number) => {
-    await (window as any).ether.shows['delete-by-id'](id); loadModal();
+    // deleteById is the shows API's name (electron/preload-handlers.js); the old 'delete-by-id' lookup did not exist,
+    // so the click threw and nothing was deleted (Jeff, 2026-10-30: "Shows & Dayparts delete: make it work").
+    await (window as any).ether.shows.deleteById(id); loadModal();
   };
 
   // Check if the target hour now has a clock assigned
