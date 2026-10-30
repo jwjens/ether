@@ -58,3 +58,20 @@ it because its list never read `expires_at` and its Status column was only `acti
   (`station_lifetime`). Both are Unlimited forever under the server rules; the desktop ranks `operator` one step higher.
 - Preview: the real production rows through the new code, served by a local read-only mock, captured in a hidden
   Electron window.
+
+## Deployed 2026-10-29 (Jeff: "yes deploy that", then the three decisions)
+
+- First deploy: backend a486b3c (Railway 31c4dcd3), platform page e383def (Cloudflare b7b31866; also carried the seat-tier
+  page ed3cc44, never deployed before).
+- Decisions (Jeff, verbatim): "Add "unlimited" as its own plan key that the server and desktop both accept, renewing and
+  expiring like the other paid plans. Don't use Enterprise for it." · "License 21 (netgeak@gmail.com): label its status
+  "Free (old key)". Don't change the license." · "Generate-a-key form: the Tier dropdown starts blank, and Generate stays
+  disabled until I pick a tier."
+- Backend fd1c416 (unlimited key: VALID_PLANS, paid-plan gates, unlimited stations, ETH-UNL keys, PRICE_UNLIMITED_*),
+  f3f1ea5 ("Free (old key)"). Tests 436/436. Railway c0dd7b1e SUCCESS, CI passed; live checks normal.
+- Platform page f2f684a (Unlimited selectable, label, src/lib/tiers.ts + vitest), 0c90f03 (blank tier, Generate waits).
+  Cloudflare d4d7ef33; both platform domains serve index-BAm46lz8.js = the local build.
+- Desktop e836590 (LOCAL, not pushed): unlimited at the top rank in every plan table + named Unlimited; test
+  src/lib/planKeys.test.ts. **Installed desktops (4.6.67 and earlier) read an unknown key as Solo (no cloud backup, no
+  sync), so no license should be set to Unlimited until a desktop release carrying e836590 is installed.**
+- No license was changed.
