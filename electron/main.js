@@ -9549,7 +9549,10 @@ ipcMain.handle("updater:check", async () => {
 // Update window → Details: the release notes of every version from the running one up to the offered one, newest
 // first (electron/release-notes.js). Asked only when Details is clicked; the update never waits on it.
 ipcMain.handle("updater:release-notes", async (_, to) => {
-  try { return await require("./release-notes").releaseNotesFor({ from: app.getVersion(), to: String(to || "") }); }
+  // Ether's version, not Electron's: unpackaged, app.getVersion() is Electron's own (see the About handler above).
+  let from = app.getVersion();
+  if (!app.isPackaged) { try { from = require("../package.json").version; } catch {} }
+  try { return await require("./release-notes").releaseNotesFor({ from, to: String(to || "") }); }
   catch (e) { return { ok: false, error: e.message }; }
 });
 

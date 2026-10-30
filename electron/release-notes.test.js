@@ -39,7 +39,9 @@ describe("release notes between two versions", () => {
       .toEqual({ ok: false, error: "GitHub did not answer in time" });
   });
   it("main answers updater:release-notes from the running version", () => {
-    expect(read("electron/main.js")).toMatch(/ipcMain\.handle\("updater:release-notes"[\s\S]{0,200}releaseNotesFor\(\{ from: app\.getVersion\(\)/);
+    const h = read("electron/main.js").match(/ipcMain\.handle\("updater:release-notes"[\s\S]{0,600}?\n\}\);/)[0];
+    expect(h).toMatch(/releaseNotesFor\(\{ from,/);
+    expect(h).toMatch(/if \(!app\.isPackaged\) \{ try \{ from = require\("\.\.\/package\.json"\)\.version/);   // Ether's version, not Electron's
   });
   it("every update window (available, downloading, ready, failed) has the Details button, and the update path never waits on it", () => {
     const u = read("src/components/Updater.tsx");
