@@ -11233,7 +11233,7 @@ async function fetchR2Track(fileKey, name) {
   // Member-operated active station: fetch its audio under the MEMBER token (the operated account's R2
   // prefix), bypassing this install's license/tier gate — the active membership IS the authorization.
   const memberToken = memberTokenForActiveStation();
-  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3, unlimited: 3 };
   let licenseKey = null;
   if (!memberToken) {
     // Tier gate — Network+ only
@@ -14049,7 +14049,7 @@ ipcMain.handle('library:cloud-status', () => {
 
 ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
   const force = !!(opts && opts.force);   // re-upload everything, ignoring the resume markers
-  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3, unlimited: 3 };
 
   // Tier gate — Network+ only
   const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
@@ -14308,7 +14308,7 @@ function _r2SignedIO(licenseKey) {
 const AUDIO_FILE_KEY_TABLES = ['announcements', 'spots', 'cart_slots', 'voice_tracks', 'published_episodes'];
 
 function _catalogueR2Gate() {
-  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3, unlimited: 3 };
   const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
   if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.station) {
     return { ok: false, error: `Cloud backup requires Network (station) tier or higher — current: ${planTier}` };
@@ -14675,7 +14675,7 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
   // library and the resolver tier finds them by basename — so there is nothing left for the flag to
   // switch. Kept in the signature so existing callers (onboarding pre-warm) do not break.
   void (opts && opts.materialize);
-  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3, unlimited: 3 };
 
   // Tier gate — Network+ only (duplicates fetchR2Track's gate for fast-bail)
   const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';

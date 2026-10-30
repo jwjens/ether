@@ -14,7 +14,7 @@ const PAYMENT_LINK_STATION        = "https://buy.stripe.com/cNi14hgxC6Sx1FB2RN9k
 const PAYMENT_LINK_PRO_LIFETIME     = "https://buy.stripe.com/pro-lifetime";     // replace with real link
 const PAYMENT_LINK_STATION_LIFETIME = "https://buy.stripe.com/station-lifetime"; // replace with real link
 
-export type PlanTier = "free" | "pro" | "station" | "pro_lifetime" | "station_lifetime" | "operator";
+export type PlanTier = "free" | "pro" | "station" | "pro_lifetime" | "station_lifetime" | "operator" | "unlimited";
 
 interface PlanFeature {
   label: string;
@@ -235,6 +235,7 @@ export default function SubscriptionPanel() {
     if (plan === "pro_lifetime")     return "#f59e0b";
     if (plan === "station_lifetime") return "#f59e0b";
     if (plan === "operator")         return "#10b981";
+    if (plan === "unlimited")        return "#10b981";
     return "#34d399";
   };
 
@@ -244,6 +245,7 @@ export default function SubscriptionPanel() {
     if (plan === "pro_lifetime")     return "Studio Lifetime";
     if (plan === "station_lifetime") return "Network Lifetime";
     if (plan === "operator")         return "Enterprise";
+    if (plan === "unlimited")        return "Unlimited";
     return "Solo";
   };
 

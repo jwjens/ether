@@ -16,9 +16,10 @@
 import { useState, useEffect } from "react";
 import { OWNER_LICENSE_KEY } from "../lib/devAccess";
 
-export type PlanTier = "free" | "pro" | "pro_lifetime" | "station" | "station_lifetime" | "operator";
+// unlimited (2026-10-29): the catalog's Unlimited plan — its own key, renewing and expiring like the other paid plans.
+export type PlanTier = "free" | "pro" | "pro_lifetime" | "station" | "station_lifetime" | "operator" | "unlimited";
 
-const TIER_RANK: Record<PlanTier, number> = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+const TIER_RANK: Record<PlanTier, number> = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3, unlimited: 3 };
 
 /** Returns true if the user's current plan meets or exceeds the required tier */
 export function requirePlan(required: PlanTier, current: PlanTier): boolean {

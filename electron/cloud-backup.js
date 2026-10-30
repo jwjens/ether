@@ -24,7 +24,7 @@ const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
 
 // Local copy of usePlan.tsx's TIER_RANK. Renderer can't be imported from
 // electron-main; keep in sync if PlanTier ever changes.
-const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3, unlimited: 3 };
 
 // Resolves the LIVE db connection on every use. main.js passes its getDb() function, so a self-heal/
 // restore reopen is picked up automatically (this module caches no prepared statements). Accepts a

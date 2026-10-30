@@ -482,6 +482,7 @@ const TIER_ACCENT: Record<string, { cyan: string; blue: string }> = {
   station:          { cyan: "#6040c0", blue: "#4a2d9e" }, // Network — dark rich
   station_lifetime: { cyan: "#6040c0", blue: "#4a2d9e" },
   operator:         { cyan: "#4a2d9e", blue: "#34208a" }, // Enterprise — deepest
+  unlimited:        { cyan: "#4a2d9e", blue: "#34208a" }, // Unlimited — the top plan
 };
 let _tierForAccent = "pro"; // until the plan is known
 
