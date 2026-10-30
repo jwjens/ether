@@ -13,6 +13,7 @@
 // The actual TTS happens in main process (electron/ai-voice.js) so API keys
 // stay out of the renderer.
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useMemo, useState } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
@@ -320,8 +321,8 @@ function LibraryTab({ segments, loading, playing, setPlaying, onRefresh }:
 
   const archive = (s: Segment) => ether.ai.updateSegment(s.id, { status: "archived", stationId: getActiveStationIdSync() }).then(onRefresh);
   const reactivate = (s: Segment) => ether.ai.updateSegment(s.id, { status: "ready", stationId: getActiveStationIdSync() }).then(onRefresh);
-  const del = (s: Segment) => {
-    if (!confirm(`Delete "${s.title}"? The audio file will be removed.`)) return;
+  const del = async (s: Segment) => {
+    if (!(await etherConfirm(`Delete "${s.title}"? The audio file will be removed.`, { danger: true }))) return;
     ether.ai.deleteSegment(s.id, getActiveStationIdSync()).then(onRefresh);
   };
 
@@ -412,7 +413,7 @@ function TemplatesTab({ templates, onChange }: { templates: Template[]; onChange
   const [adding, setAdding]   = useState(false);
 
   const del = async (t: Template) => {
-    if (!confirm(`Delete template "${t.name}"?`)) return;
+    if (!(await etherConfirm(`Delete template "${t.name}"?`, { danger: true }))) return;
     await ether.ai.deleteTemplate(t.id);
     onChange();
   };

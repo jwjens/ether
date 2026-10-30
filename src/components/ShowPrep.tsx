@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect, useRef } from "react";
 import { DeckState } from "../audio/engine-rodio";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -481,7 +482,7 @@ function ScriptWriter() {
                 </div>
                 <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                   {note.show_date && <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{note.show_date}</span>}
-                  <button onClick={async e => { e.stopPropagation(); if (!confirm("Delete?")) return; await (window as any).ether.prepNotes.deleteById(note.id); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                  <button onClick={async e => { e.stopPropagation(); if (!(await etherConfirm("Delete?", { danger: true }))) return; await (window as any).ether.prepNotes.deleteById(note.id); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                 </div>
               </div>
               {note.body && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{note.body.substring(0, 100)}{note.body.length > 100 ? "…" : ""}</div>}

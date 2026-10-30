@@ -2,6 +2,7 @@
 // "I set how often backups run (down to every few minutes) and how many are kept, on each computer. The restore screen
 // lists every backup with its date and time so I can pick the one from just before a mistake."). Main does the work
 // (electron/backups.js; IPC backups:*). Restoring expects sync OFF (the switch above); a restore discards unsent changes.
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState } from "react";
 
 const EVERY = [[0, "Off"], [5, "Every 5 minutes"], [10, "Every 10 minutes"], [15, "Every 15 minutes"], [30, "Every 30 minutes"],
@@ -36,8 +37,8 @@ export default function BackupsPanel({ onRestoreLocal }: { onRestoreLocal: (name
     } finally { setBusy(null); load(); }
   };
   const restoreCloud = async (b: any) => {
-    if (!confirm(`Restore the cloud backup from ${cloudWhen(b.timestamp)} (${b.computer})?\n\nThis replaces this computer's station database. ` +
-                 `Switch sync off first (above) so nothing spreads; changes not yet sent are discarded.`)) return;
+    if (!(await etherConfirm(`Restore the cloud backup from ${cloudWhen(b.timestamp)} (${b.computer})?\n\nThis replaces this computer's station database. ` +
+                 `Switch sync off first (above) so nothing spreads; changes not yet sent are discarded.`, { danger: true }))) return;
     setBusy("restore"); setMsg("Downloading and restoring…");
     try {
       const r = await ether.invoke("backups:restore-cloud", b.key);

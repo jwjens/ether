@@ -1,3 +1,4 @@
+import { EtherConfirmHost } from "./components/ConfirmDialog";
 import React, { Component, Profiler, ReactNode } from "react";
 import * as Sentry from "@sentry/electron/renderer";
 
@@ -123,6 +124,7 @@ async function boot() {
       <RootBoundary>
         {DevTierBanner && <DevTierBanner />}
         {mainContent}
+        <EtherConfirmHost />
         {DebugMount && <DebugMount />}
       </RootBoundary>
     </Profiler>

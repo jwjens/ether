@@ -3,6 +3,7 @@
 // NO LOGIC CHANGED. Scheduler.tsx re-exports this so the tabbed panel, the three popouts
 // (PopoutRenderer.tsx) and the embedded programming panel (App.tsx) behave identically.
 // docs/schedule-manager-design-2026-08-10.md §8 Phase A
+import { etherConfirm } from "../../lib/etherConfirm";
 import { askText } from "../../lib/askText";
 import { useState, useEffect, useRef } from "react";
 import { queryScoped } from "../../db/stationScoped";
@@ -275,7 +276,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
     const msg = (breaks + spots === 0)
       ? `Delete spot category "${c.name}"?`
       : `Delete "${c.name}"?\n\nIt's used by ${breaks} timed break(s) and ${spots} spot(s). Deleting will set those breaks to "Any spot" and make those spots uncategorized. This changes what airs on the next Generate.\n\nDelete anyway?`;
-    if (!confirm(msg)) return;
+    if (!(await etherConfirm(msg))) return;
     await (window as any).ether.spotCategories.delete(c.uuid, stationId);
     loadSpotCats();
   };

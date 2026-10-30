@@ -4,6 +4,7 @@
  * Uses ether.stations.* IPC (never raw SQL) so the safety gate is respected.
  */
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { query } from "../db/client";
 import { PublicPageEditor } from "./SettingsPanel";
@@ -493,9 +494,9 @@ export default function StationManager({ onStationSwitch }: Props) {
       alert(`"${s?.name}" is your only station. Create the replacement station first (+ Add Station), then delete this one.`);
       return;
     }
-    if (!confirm(
+    if (!(await etherConfirm(
       `Delete station "${s?.name}"?\n\nAll station-scoped data (schedules, logs, library associations) will be permanently removed. This cannot be undone.`
-    )) return;
+    , { danger: true }))) return;
     // Never leave the app pointing at a deleted station: if this is the active one,
     // switch to another before deleting.
     if (id === activeStationId) {

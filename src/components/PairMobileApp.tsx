@@ -3,6 +3,7 @@
 // freshly-generated 6-digit code (10-min expiry). Lists paired devices
 // with revoke buttons.
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState } from "react";
 
 interface Device {
@@ -73,7 +74,7 @@ export default function PairMobileApp() {
   };
 
   const revoke = async (d: Device) => {
-    if (!confirm(`Revoke "${d.device_label || `device #${d.id}`}"? They'll need to re-pair to upload again.`)) return;
+    if (!(await etherConfirm(`Revoke "${d.device_label || `device #${d.id}`}"? They'll need to re-pair to upload again.`, { danger: true }))) return;
     await ether.v2g.revoke(d.id);
     refreshDevices();
   };

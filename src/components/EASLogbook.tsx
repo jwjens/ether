@@ -16,6 +16,7 @@
 //
 // FCC reference: 47 CFR § 11.31, 11.35, 11.61. Tests must be retained 2 years.
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState, useMemo } from "react";
 import { query, execute } from "../db/client";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -119,7 +120,7 @@ export default function EASLogbook({ onClose }: { onClose?: () => void }) {
   }, [entries]);
 
   const deleteEntry = async (id: number) => {
-    if (!confirm("Delete this EAS log entry? FCC requires 2-year retention — only delete duplicates or errors.")) return;
+    if (!(await etherConfirm("Delete this EAS log entry? FCC requires 2-year retention — only delete duplicates or errors.", { danger: true }))) return;
     await execute("DELETE FROM eas_tests WHERE id = ? AND station_id = ?", [id, stationId]);
     load();
   };

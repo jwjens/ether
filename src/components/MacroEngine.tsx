@@ -9,6 +9,7 @@
 // Actions map to the existing command dispatch system in App.tsx
 // plus direct IPC calls for audio transport, streaming, etc.
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { queryScoped } from "../db/stationScoped";
@@ -231,7 +232,7 @@ export default function MacrosPanel() {
   };
 
   const deleteMacro = async (id: number) => {
-    if (!confirm("Delete this macro?")) return;
+    if (!(await etherConfirm("Delete this macro?", { danger: true }))) return;
     await (window as any).ether.macros.deleteById(id);
     load();
     window.dispatchEvent(new CustomEvent("ether:macros-changed"));

@@ -3,6 +3,7 @@
 // NO LOGIC CHANGED. Scheduler.tsx re-exports this so the tabbed panel, the three popouts
 // (PopoutRenderer.tsx) and the embedded programming panel (App.tsx) behave identically.
 // docs/schedule-manager-design-2026-08-10.md §8 Phase A
+import { etherConfirm } from "../../lib/etherConfirm";
 import { useState, useEffect } from "react";
 import { queryScoped } from "../../db/stationScoped";
 import { useActiveStation } from "../../hooks/useActiveStation";
@@ -82,7 +83,7 @@ export function ShowsTab({ shows: showsProp, clocks: clocksProp, onMutated, sele
   };
 
   const remove = async (id: number, name: string) => {
-    if (!confirm(`Delete "${name}"?`)) return;
+    if (!(await etherConfirm(`Delete "${name}"?`, { danger: true }))) return;
     await (window as any).ether.shows.deleteById(id);
     load();
   };

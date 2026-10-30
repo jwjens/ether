@@ -30,6 +30,7 @@
 //   actual AudioParam via linearRampToValueAtTime — sample-accurate, no
 //   per-frame JS work.
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { isPlainKey } from "../lib/plainKey";
 import { askText } from "../lib/askText";
 import React, {
@@ -1509,8 +1510,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   useEffect(() => {
     const ether = (window as any).ether;
     if (!ether?.on) return;
-    const h = ether.on("studio:confirm-close", () => {
-      const ok = window.confirm("Discard this Show+ session?\n\nRegions you haven't sent to a deck will be lost.");
+    const h = ether.on("studio:confirm-close", async () => {
+      const ok = (await etherConfirm("Discard this Show+ session?\n\nRegions you haven't sent to a deck will be lost.", { danger: true }));
       if (ok) { try { ether.invoke("studio:force-close"); } catch { /* ignore */ } }
     });
     return () => { try { ether.off("studio:confirm-close", h); } catch { /* ignore */ } };
@@ -3611,7 +3612,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
   // Restore a version (auto-saves current state first)
   const restoreVersion = useCallback(async (v: SessionVersion) => {
-    if (!confirm(`Restore "${v.label || `Version ${v.version_number}`}"?\n\nYour current state will be auto-saved first so nothing is lost.`)) return;
+    if (!(await etherConfirm(`Restore "${v.label || `Version ${v.version_number}`}"?\n\nYour current state will be auto-saved first so nothing is lost.`, { danger: true }))) return;
     // Auto-save current state before restoring
     await saveVersion(`Before restore to v${v.version_number}`, false);
 

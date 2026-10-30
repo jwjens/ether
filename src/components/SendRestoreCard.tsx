@@ -2,6 +2,7 @@
 // 'Send this restore to every machine' (with a confirm) that makes the restored data replace the mistake on every
 // computer. Without that action, use (a)."). Shown in Preferences → Keep my stuff synced while a restore has not been
 // sent. Main does the work and checks the admin PIN (electron/main.js sync:send-restore; electron/sync/restore-sync.js).
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState } from "react";
 
 export default function SendRestoreCard() {
@@ -18,9 +19,9 @@ export default function SendRestoreCard() {
   const send = async () => {
     if (info.syncOn) { setMsg("Switch sync off first (the switch above), then send the restore."); return; }
     if (!/^\d{4}$/.test(pin)) { setMsg("Enter your 4-digit admin PIN."); return; }
-    if (!confirm(`Send this restore to every computer?\n\nRestored: ${p.backup || "a backup"} (${when}).\n` +
+    if (!(await etherConfirm(`Send this restore to every computer?\n\nRestored: ${p.backup || "a backup"} (${when}).\n` +
                  `${pv.putBack} row(s) go back to the backup's version on every computer; ${pv.remove} row(s) this computer created since the backup are removed everywhere.\n\n` +
-                 `Other computers' changes are kept, unless they changed one of these same rows — then the backup's version wins.`)) return;
+                 `Other computers' changes are kept, unless they changed one of these same rows — then the backup's version wins.`, { danger: true }))) return;
     setBusy(true); setMsg("");
     try {
       const r = await (window as any).ether.invoke("sync:send-restore", pin);

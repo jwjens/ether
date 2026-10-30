@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { setClosingForDates } from "../lib/closingTime";
 import { useState, useEffect } from "react";
 import { queryScoped } from "../db/stationScoped";
@@ -1012,8 +1013,8 @@ export default function Announcements() {
     const n = a ? entries.filter(e => e.announcement_uuid === a.uuid).length : 0;
     // Says what ELSE goes, because deleting the asset cascades its schedule entries. A delete that
     // silently removes rows the operator did not name is how a schedule quietly loses a slot.
-    if (!confirm(n ? `Delete "${a?.title}" and remove it from ${n} schedule ${n === 1 ? "entry" : "entries"}?`
-                   : "Delete this announcement?")) return;
+    if (!(await etherConfirm(n ? `Delete "${a?.title}" and remove it from ${n} schedule ${n === 1 ? "entry" : "entries"}?`
+                   : "Delete this announcement?", { danger: true }))) return;
     await (window as any).ether.announcements.deleteById(id); load(); loadEntries();
   };
 

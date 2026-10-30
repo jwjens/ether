@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { setPlanGlobally, usePlan } from "../hooks/usePlan";
@@ -633,11 +634,11 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     try {
       const onAir = await ether.invoke('account:was-on-air');
       if (onAir === true || (onAir && onAir.onAir)) {
-        const go = confirm(
+        const go = (await etherConfirm(
           "A station is ON AIR right now.\n\n" +
           "Syncing replaces this computer's station database, so playback will STOP while it runs and " +
           "the audio engine restarts afterwards.\n\nContinue?"
-        );
+        , { danger: true }));
         if (!go) { setSyncPhase('choose'); return; }   // back to the station picker, nothing touched
       }
     } catch { /* can't tell → carry on; the sync itself is still safe */ }

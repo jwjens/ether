@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { audioLibraryDir } from "../lib/fileLocation";
@@ -805,7 +806,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   // (handlers/voice_tracks.js retractVoiceTrackReferences) -- the count is the receipt that it ran.
   const deleteTrack = async (id: number) => {
     const track = tracks.find(t => t.id === id);
-    if (!confirm(`Delete "${track?.title ?? "this voice track"}"?`)) return;
+    if (!(await etherConfirm(`Delete "${track?.title ?? "this voice track"}"?`, { danger: true }))) return;
     if (playingId === id) { audioRef.current?.pause(); setPlayingId(null); }
     try {
       const res = await (window as any).ether.voiceTracks.deleteById(id);

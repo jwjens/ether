@@ -17,6 +17,7 @@
 //   station FALLBACK pool for unassigned categories is gone — it overrode every "none". Every change is saved (an error
 //   says so) and re-places the pending log's sweepers at once (main.js _replaceSweepers).
 // Selection lives here in the ONE scheduler (Generate); the daemon only orchestrates the fire. Cadence retired.
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { query } from "../db/client";
 import { SWP_INDIGO } from "../lib/classColors";
@@ -151,7 +152,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
     } finally { setBusy(false); }
   };
   const patchPool = async (p: Pool, patch: Partial<Pool>) => { if (ro) return; try { await ether()?.jingleCategories?.updateById(p.id, patch); await reload(); } catch {} };
-  const delPool = async (p: Pool) => { if (ro) return; if (!confirm(`Delete pool "${p.name}"? Assigned overlays become unassigned (not deleted).`)) return; try { await ether()?.jingleCategories?.delete(p.uuid, stationId); await reload(); } catch {} };
+  const delPool = async (p: Pool) => { if (ro) return; if (!(await etherConfirm(`Delete pool "${p.name}"? Assigned overlays become unassigned (not deleted).`, { danger: true }))) return; try { await ether()?.jingleCategories?.delete(p.uuid, stationId); await reload(); } catch {} };
   /** v55 — a MEMBERSHIP is created or removed. It is not a field on the song any more, because a cut
    *  belongs to more than one pool: adding it to halloVeen's Halloween no longer takes it out of
    *  Christmas in Jully's Summer Christmas. Keyed on the asset uuid, which names the same cut on

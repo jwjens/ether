@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { ClassBadge, ClassFilter, passesClassFilter } from "../lib/contentClass";
 import { useState, useEffect, useMemo, useRef, useLayoutEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -198,7 +199,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
   const [reconcileData, setReconcileData] = useState<{ scheduled: any[]; actual: any[]; matched: any[] } | null>(null);
 
   // station_id scoping: manual WHERE — DELETE without original WHERE must be scoped explicitly
-  const clearLog = async () => { if (!confirm("Clear the entire play log?")) return; await (window as any).ether.playLog.clearByStation(stationId); load(); };
+  const clearLog = async () => { if (!(await etherConfirm("Clear the entire play log?", { danger: true }))) return; await (window as any).ether.playLog.clearByStation(stationId); load(); };
 
   // ── As-Run reconciliation ───────────────────────────────────────────────────────────────────────
   // FIXED 2026-08-09. This used to read the old log table, which NOTHING WROTE (0 rows since

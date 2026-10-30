@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect } from "react";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 
@@ -29,7 +30,7 @@ export default function BackupRestore() {
   };
 
   const restore = async (name: string) => {
-    if (!confirm("Restore from " + name + "? Current data will be replaced. Ether will need to restart.")) return;
+    if (!(await etherConfirm("Restore from " + name + "? Current data will be replaced. Ether will need to restart.", { danger: true }))) return;
     try {
       const msg = await invoke<string>("restore_db", { backupName: name });
       setStatus(msg);

@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { query } from "../db/client";
@@ -188,7 +189,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
     const msg = (breaks + spots === 0)
       ? `Delete spot category "${c.name}"?`
       : `Delete "${c.name}"?\n\nIt's used by ${breaks} timed break(s) and ${spots} spot(s). Deleting will set those breaks to "Any spot" and make those spots uncategorized. This changes what airs on the next Generate.\n\nDelete anyway?`;
-    if (!confirm(msg)) return;
+    if (!(await etherConfirm(msg))) return;
     await (window as any).ether.spotCategories.delete(c.uuid, stationId);
     // A delete also rewrites the breaks that pointed at it ("Any spot"), so the Clocks pane must
     // re-read clock_breaks too — otherwise it keeps showing a category that no longer exists.
@@ -373,7 +374,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
   // operator can hear is itself the signal that something is wrong.
   const remove = async (id: number) => {
     const spot = spots.find(s => s.id === id);
-    if (!confirm(`Delete "${spot?.title ?? "this spot"}"?`)) return;
+    if (!(await etherConfirm(`Delete "${spot?.title ?? "this spot"}"?`, { danger: true }))) return;
     try {
       const res = await (window as any).ether.spots.deleteById(id);
       if (!res?.ok) { setStatus(`Could not delete "${spot?.title ?? id}": ${res?.error ?? "no reason given"}`); return; }

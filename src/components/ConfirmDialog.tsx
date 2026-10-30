@@ -2,15 +2,22 @@
 // useConfirm() returns [ask, dialog]: render `dialog` in the component, `await ask("Delete X?", { danger: true })`.
 // Enter confirms, Esc cancels; the dialog takes focus so a stray key can't answer it for the operator.
 import React, { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { createConfirmController } from "../lib/confirmController";
+import { createConfirmController, type ConfirmController } from "../lib/confirmController";
+import { etherConfirmController } from "../lib/etherConfirm";
 
 export function useConfirm(): [(message: string, opts?: { confirmLabel?: string; danger?: boolean }) => Promise<boolean>, React.ReactNode] {
   const ctl = useMemo(() => createConfirmController(), []);
+  useEffect(() => () => ctl.answer(false), [ctl]);   // unmounting never leaves a question hanging
+  return [ctl.ask, <ConfirmView ctl={ctl} />];
+}
+
+/** Renders whatever `ctl` is asking. Used by useConfirm() and by the one app-wide host (EtherConfirmHost). */
+export function ConfirmView({ ctl }: { ctl: ConfirmController }) {
   const req = useSyncExternalStore(ctl.subscribe, ctl.pending, ctl.pending);
   const okRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (req) okRef.current?.focus(); }, [req]);
-  useEffect(() => () => ctl.answer(false), [ctl]);   // unmounting never leaves a question hanging
-  const dialog = req ? (
+  if (!req) return null;
+  return (
     <div role="alertdialog" aria-modal="true" aria-label={req.message}
          onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); ctl.answer(false); } }}
          style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -29,6 +36,10 @@ export function useConfirm(): [(message: string, opts?: { confirmLabel?: string;
         </div>
       </div>
     </div>
-  ) : null;
-  return [ctl.ask, dialog];
+  );
+}
+
+/** The one app-wide confirm window, mounted at every window's root (src/main.tsx). etherConfirm() asks it. */
+export function EtherConfirmHost() {
+  return <ConfirmView ctl={etherConfirmController} />;
 }

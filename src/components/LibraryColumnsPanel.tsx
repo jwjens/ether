@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect, useRef } from "react";
 import { ALL_LIB_COLS, LIB_COL_LABELS, HIDDEN_BUILTIN_COL_NAMES, type LibCol, type MetadataDefinition, type MetadataVocabulary } from "../types/metadata";
 
@@ -246,7 +247,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   }
 
   async function removeVocab(def: MetadataDefinition, vocab: MetadataVocabulary) {
-    if (!confirm(`Delete '${vocab.value}'? This cannot be undone.`)) return;
+    if (!(await etherConfirm(`Delete '${vocab.value}'? This cannot be undone.`, { danger: true }))) return;
     try {
       const res = await (window as any).ether.metadataVocabulary.delete(vocab.uuid, stationId);
       if (!res?.ok) { alert(res?.error ?? "Failed to remove value."); return; }
@@ -295,7 +296,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   }
 
   async function removeDefinition(def: MetadataDefinition) {
-    if (!confirm(`Delete '${def.name}'? This cannot be undone.`)) return;
+    if (!(await etherConfirm(`Delete '${def.name}'? This cannot be undone.`, { danger: true }))) return;
     try {
       const res = await (window as any).ether.metadataDefinitions.delete(def.uuid, stationId);
       if (!res?.ok) { alert(res?.error ?? "Failed to delete category."); return; }

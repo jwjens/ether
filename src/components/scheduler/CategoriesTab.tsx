@@ -3,6 +3,7 @@
 // NO LOGIC CHANGED. Scheduler.tsx re-exports this so the tabbed panel, the three popouts
 // (PopoutRenderer.tsx) and the embedded programming panel (App.tsx) behave identically.
 // docs/schedule-manager-design-2026-08-10.md §8 Phase A
+import { etherConfirm } from "../../lib/etherConfirm";
 import { useState, useEffect } from "react";
 import { queryScoped } from "../../db/stationScoped";
 import { useActiveStation } from "../../hooks/useActiveStation";
@@ -103,7 +104,7 @@ export function CategoriesTab({ cats: catsProp, onMutated, selectedCategoryId, o
   const del = async () => {
     if (!editing?.id || !editing.uuid) return;
     const label = `${editing.code}${editing.name ? " — " + editing.name : ""}`;
-    if (!confirm(`Delete category "${label}"?\n\nSongs in this category won't be deleted, but they'll lose this category assignment.`)) return;
+    if (!(await etherConfirm(`Delete category "${label}"?\n\nSongs in this category won't be deleted, but they'll lose this category assignment.`, { danger: true }))) return;
     setSaveError("");
     try {
       // categories:delete NEVER rejects — the handler catches and RETURNS { ok:false, error }

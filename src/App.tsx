@@ -1,3 +1,4 @@
+import { etherConfirm } from "./lib/etherConfirm";
 import { isPlainKey } from "./lib/plainKey";
 import { bootSeq, bootMarkAuthComplete } from "./audio/boot-seq";
 import UserLogin from "./components/UserLogin";
@@ -400,9 +401,9 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
                     {l.name !== name && onDeleteLayout && (
                       <button
                         title="Delete layout"
-                        onClick={e => {
+                        onClick={async e => {
                           e.stopPropagation();
-                          if (confirm(`Delete layout "${l.name}"?`)) {
+                          if ((await etherConfirm(`Delete layout "${l.name}"?`, { danger: true }))) {
                             onDeleteLayout(l.id);
                           }
                         }}
@@ -2452,7 +2453,7 @@ export default function App() {
         const sched = await (window as any).ether.invoke("schedule:get", nowTs - 300, nowTs + 7200);
         const hasSchedule = Array.isArray(sched?.data) && sched.data.length > 0;
         if (!hasSchedule) {
-          const populate = window.confirm("Nothing is scheduled to play right now.\n\nAuto-populate the queue with rotation-eligible songs?\n\nOK = Yes    ·    Cancel = No (open the Scheduler and generate a schedule)");
+          const populate = (await etherConfirm("Nothing is scheduled to play right now.\n\nAuto-populate the queue with rotation-eligible songs?\n\nOK = Yes    ·    Cancel = No (open the Scheduler and generate a schedule)"));
           if (!populate) {
             setAutoAdv(false); engine.autoAdvance = false;
             writeAutoAdv(stationId, false);
@@ -4882,7 +4883,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     const v = cartEdit.value.trim();
     // Warn (don't block) if this cart # is already on another element.
     const clash = songs.find(x => x.id !== cartEdit.id && (x.cart_id || "") === v && v !== "");
-    if (clash && !confirm(`Cart #${v} is already on "${clash.title}". Use it here too?`)) { setCartSaving(false); return; }
+    if (clash && !(await etherConfirm(`Cart #${v} is already on "${clash.title}". Use it here too?`))) { setCartSaving(false); return; }
     try {
       const r = await (window as any).ether.songsExtra.setCartId(cartEdit.id, v);
       if (!r?.ok) throw new Error(r?.error || "Save failed");
@@ -5540,7 +5541,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           if (catId == null) { window.alert(`"${code}" isn't a category for this station — nothing was changed.`); return; }
           const targets = filtered.filter(isSongRow).length;
           if (targets === 0) { window.alert("No songs in view — categories apply to songs only."); return; }
-          if (!window.confirm(`Assign category "${cat?.name || code}" to all ${targets} shown song${targets === 1 ? "" : "s"}?\n\nThis OVERWRITES their current category for this station and can't be undone.`)) return;
+          if (!(await etherConfirm(`Assign category "${cat?.name || code}" to all ${targets} shown song${targets === 1 ? "" : "s"}?\n\nThis OVERWRITES their current category for this station and can't be undone.`, { danger: true }))) return;
           for (const s of filtered.filter(isSongRow)) await (window as any).ether.songs.updateById(s.id, { category_id: catId });
           load();
         }}

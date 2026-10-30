@@ -8,6 +8,7 @@
 //
 // Pure renderer code — all CRUD goes through `ether.metadata.*` IPC.
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState } from "react";
 
 type TargetType = "icecast" | "shoutcast" | "tunein" | "rds" | "webhook";
@@ -92,7 +93,7 @@ export default function StreamMetadataPanel() {
   };
 
   const deleteTarget = async (t: Target) => {
-    if (!confirm(`Delete "${t.name}"? Metadata will stop pushing to this target.`)) return;
+    if (!(await etherConfirm(`Delete "${t.name}"? Metadata will stop pushing to this target.`, { danger: true }))) return;
     await ether.metadata.deleteTarget(t.id);
     refresh();
   };

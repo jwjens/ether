@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect } from "react";
 import { stampLicenseEverywhere } from "../lib/ccData";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -218,7 +219,7 @@ export default function SubscriptionPanel() {
   };
 
   const cancelPlan = async () => {
-    if (!confirm("Downgrade to Free? You'll keep access until the end of your billing period.")) return;
+    if (!(await etherConfirm("Downgrade to Free? You'll keep access until the end of your billing period.", { danger: true }))) return;
     await (window as any).ether.installConfigKv.upsertByKey('plan_tier', 'free');   // account-level tier (install scope)
     await (window as any).ether.stationConfigKv.removeByKey(stationId, 'license_key');
     setPlanGlobally("free");

@@ -2,6 +2,7 @@
 // an admin button. Nothing claims it."). Audio of songs deleted long enough ago is removed from the cloud — only after the
 // same checks as always (no live song still uses the file, nothing scheduled needs it). Admin PIN, checked in main
 // (cleanup:release-cloud-audio → electron/deletion-sweep.js). It never runs on its own.
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState } from "react";
 
 export default function CloudAudioCleanup() {
@@ -10,8 +11,8 @@ export default function CloudAudioCleanup() {
   const [msg, setMsg] = useState("");
   const run = async () => {
     if (!/^\d{4}$/.test(pin)) { setMsg("✗ Enter your 4-digit admin PIN."); return; }
-    if (!confirm("Release cloud audio now?\n\nAudio files of songs deleted long enough ago are removed from the cloud, after the usual checks " +
-                 "(no live song still uses the file, nothing scheduled needs it). This cannot be undone.")) return;
+    if (!(await etherConfirm("Release cloud audio now?\n\nAudio files of songs deleted long enough ago are removed from the cloud, after the usual checks " +
+                 "(no live song still uses the file, nothing scheduled needs it). This cannot be undone.", { danger: true }))) return;
     setBusy(true); setMsg("");
     try {
       const r = await (window as any).ether.invoke("cleanup:release-cloud-audio", pin);

@@ -1,3 +1,4 @@
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import { SyncCleanupRow, HealthLogRow } from "./SyncCleanupRows";
 import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJukeboxDonationSettings, type JukeboxPayouts } from "../lib/ccData";
@@ -2919,7 +2920,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
   // Returns the result line (BackupsPanel shows it). Restoring expects sync OFF; main discards unsent changes.
   const restore = async (name: string): Promise<string | undefined> => {
-    if (!confirm("Restore from " + formatBackupName(name) + "?\n\nYour current library and settings will be replaced. Switch sync off first (above) so nothing spreads. Ether will need to restart.")) return;
+    if (!(await etherConfirm("Restore from " + formatBackupName(name) + "?\n\nYour current library and settings will be replaced. Switch sync off first (above) so nothing spreads. Ether will need to restart.", { danger: true }))) return;
     try {
       const msg = await invoke<string>("restore_db", { backupName: name });
       setBackupStatus(msg);
@@ -3552,7 +3553,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
             <button
               disabled={cleanBusy}
               onClick={async () => {
-                if (!confirm(`Rename ${cleanPreview.length} file${cleanPreview.length !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+                if (!(await etherConfirm(`Rename ${cleanPreview.length} file${cleanPreview.length !== 1 ? "s" : ""}? This cannot be undone.`, { danger: true }))) return;
                 setCleanBusy(true); setCleanError(null);
                 try {
                   const r = await invoke("clean_filenames", { folderPath: cleanFolder, commit: true, stringsToRemove: cleanWords });
@@ -4169,7 +4170,7 @@ function UserManagement() {
   const handleDeleteUser = async (u: ManagedUser) => {
     const adminCount = users.filter(x => x.role === "admin").length;
     if (u.role === "admin" && adminCount <= 1) { alert("Cannot delete the last administrator."); return; }
-    if (!confirm(`Delete user "${u.name}"?`)) return;
+    if (!(await etherConfirm(`Delete user "${u.name}"?`, { danger: true }))) return;
     const r = await ether?.users?.remove?.(u.id);
     if (!r || !r.ok) { alert((r && r.error) || "Could not delete the user."); return; }
     loadUsers();
@@ -4188,7 +4189,7 @@ function UserManagement() {
   };
 
   const handleRemovePin = async (u: ManagedUser) => {
-    if (!confirm(`Remove PIN for "${u.name}"? They can log in without a PIN.`)) return;
+    if (!(await etherConfirm(`Remove PIN for "${u.name}"? They can log in without a PIN.`, { danger: true }))) return;
     const r = await ether?.users?.setPin?.(u.id, null);
     if (!r || !r.ok) { alert((r && r.error) || "Could not remove the PIN."); return; }
     loadUsers();

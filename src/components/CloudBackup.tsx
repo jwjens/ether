@@ -8,6 +8,7 @@
  * Gating: Pro = 30 backups max. Station = unlimited.
  */
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect, useCallback } from "react";
 import { execute } from "../db/client";
 import { usePlan } from "../hooks/usePlan";
@@ -204,7 +205,7 @@ export default function CloudBackup() {
   const [installing, setInstalling] = useState(false);
   const [installMsg, setInstallMsg] = useState("");
   const installFromCloud = async () => {
-    if (!confirm("Install this account's station from the cloud?\n\nThis replaces the local database with the latest cloud backup, then downloads the catalogue. Intended for a fresh install.")) return;
+    if (!(await etherConfirm("Install this account's station from the cloud?\n\nThis replaces the local database with the latest cloud backup, then downloads the catalogue. Intended for a fresh install.", { danger: true }))) return;
     setInstalling(true); setInstallMsg("Downloading database…");
     try {
       let r = await (window as any).ether.invoke("station:install-from-cloud", {});
@@ -212,13 +213,13 @@ export default function CloudBackup() {
         // Show how OLD the cloud backup is before overwriting — a stale backup silently replacing
         // newer local programming is the data-loss path this guards against.
         const when = r.backupTimestamp ? new Date(r.backupTimestamp).toLocaleString() : "an unknown date";
-        const ok = confirm(
+        const ok = (await etherConfirm(
           `This install already has ${r.songs} songs and its own programming.\n\n` +
           `The latest cloud backup is from:\n    ${when}\n\n` +
           `Restoring REPLACES everything on this machine with that backup. If anything you built ` +
           `locally is NEWER than ${when}, it will be LOST.\n\n` +
           `Replace the local database with the ${when} backup anyway?`
-        );
+        ));
         if (!ok) { setInstalling(false); setInstallMsg(""); return; }
         r = await (window as any).ether.invoke("station:install-from-cloud", { force: true });
       }
@@ -283,7 +284,7 @@ export default function CloudBackup() {
   // ── Restore backup ─────────────────────────────────────────
 
   const restoreBackup = async (backup: BackupEntry) => {
-    if (!confirm(`Restore backup from ${fmtDate(backup.created_at)}?\n\nThis will REPLACE your current play_log with the backup data. Songs library will not be affected.`)) return;
+    if (!(await etherConfirm(`Restore backup from ${fmtDate(backup.created_at)}?\n\nThis will REPLACE your current play_log with the backup data. Songs library will not be affected.`, { danger: true }))) return;
 
     setRestoring(backup.id);
     setStatus({ msg: "Downloading backup...", type: "info" });
@@ -335,7 +336,7 @@ export default function CloudBackup() {
   // ── Delete backup ──────────────────────────────────────────
 
   const deleteBackup = async (backup: BackupEntry) => {
-    if (!confirm("Delete this backup? This cannot be undone.")) return;
+    if (!(await etherConfirm("Delete this backup? This cannot be undone.", { danger: true }))) return;
     setDeleting(backup.id);
     try {
       const res = await fetch(`${ETHER_BACKEND_URL}/backup/${backup.id}`, {

@@ -10,6 +10,7 @@
 // The mobile app handles recording + upload; this is purely the receiving
 // side. Voice tracks live as files in <userData>/voice-tracks/.
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { localMediaRef } from "../audio/localOutput";
@@ -111,7 +112,7 @@ export default function VoiceTrackInbox({ onClose }: { onClose?: () => void }) {
   };
 
   const deleteTrack = async (t: Track) => {
-    if (!confirm(`Delete "${t.title || "Untitled"}"? The audio file will be removed from disk.`)) return;
+    if (!(await etherConfirm(`Delete "${t.title || "Untitled"}"? The audio file will be removed from disk.`, { danger: true }))) return;
     await ether.v2g.deleteTrack(t.id);
     load();
   };

@@ -10,6 +10,7 @@
 //
 // This is the GSelector "PD Picks" / Wide Orbit "Mandatory Songs" feature.
 
+import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState } from "react";
 import { query } from "../db/client";
 
@@ -90,7 +91,7 @@ export default function PDPicks({ stationId, onClose }: { stationId: number; onC
   });
 
   const deletePin = async (id: number) => {
-    if (!confirm("Remove this pin? The song will go back to normal rotation.")) return;
+    if (!(await etherConfirm("Remove this pin? The song will go back to normal rotation.", { danger: true }))) return;
     await (window as any).ether.pinnedSongs.deleteById(id);
     load();
   };
