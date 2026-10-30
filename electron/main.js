@@ -8615,6 +8615,14 @@ ipcMain.handle("autostart:isEnabled", () => app.getLoginItemSettings().openAtLog
 
 // ── Generic invoke aliases (old Tauri command names) ─────────
 
+// A file's length in seconds (0 if it cannot be read). Categories → "⏱ Scan Durations" and the clock preview ask under
+// this old name; it had no handler, so every song came back "failed" (Jeff, 2026-10-30: "Scan Durations: make it work").
+ipcMain.handle("get_file_duration", (_, args) => {
+  const filePath = (args && typeof args === "object") ? args.filePath : args;
+  if (!filePath) return 0;
+  try { return audio.getFileDuration(String(filePath)) || 0; } catch { return 0; }
+});
+
 ipcMain.handle("watchdog_set", (_, args) => {
   const { active, thresholdSec } = args || {};
   return audio.watchdogSet(active ?? false, thresholdSec ?? 30);
