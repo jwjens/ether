@@ -3,7 +3,7 @@ feature: update-details
 title: Update details (what's new)
 summary: The Details button on every update window shows what was added and fixed — every version since yours, newest first.
 where: The update window (bottom right) → Details
-since: 4.6.69
+since: 4.6.70
 audience: operator
 tour: false
 ---
