@@ -8653,9 +8653,10 @@ ipcMain.handle("stream_stop", async () => {
   try { return audio.streamStop ? audio.streamStop() : true; } catch { return true; }
 });
 
+// Library → Normalize. { ok: true, gain } or { ok: false, error } — never a made-up gain (electron/loudness-gain.js).
 ipcMain.handle("analyze_lufs", (_, args) => {
   const filePath = args?.filePath ?? args;
-  try { return audio.analyzeLufs(filePath); } catch { return -14; }
+  return require("./loudness-gain").gainFor(filePath, { analyze: (p) => audio.analyzeLufs(p), measure: (p) => audio.measureSongLoudness(p) });
 });
 
 ipcMain.handle("analyze_song", (_, args) => {

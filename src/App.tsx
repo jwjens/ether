@@ -5276,14 +5276,22 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   };
   const analyzeLufs = async () => {
     // station_id scoping: Strategy B — single table with existing WHERE
-    const songs = await queryScoped<{id: number, file_path: string}>("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND gain_db = 0 LIMIT 50", [], stationId);
+    const songs = await queryScoped<{id: number, file_path: string, title: string | null}>("SELECT id, file_path, title FROM songs WHERE file_path IS NOT NULL AND gain_db = 0 LIMIT 50", [], stationId);
     if (songs.length === 0) { setStatus("All songs already analyzed"); setTimeout(() => setStatus(""), 3000); return; }
-    setStatus("Analyzing... 0/" + songs.length); let done = 0;
+    // A song whose analysis fails is reported and left exactly as it was — no made-up gain (electron/loudness-gain.js).
+    setStatus("Analyzing... 0/" + songs.length); let done = 0; let set = 0; const failed: string[] = [];
     for (const song of songs) {
-      try { const gain = await invoke<number>("analyze_lufs", { filePath: song.file_path }); await (window as any).ether.songs.updateById(song.id, { gain_db: gain }); } catch {}
+      try {
+        const r = await invoke<{ ok: boolean; gain?: number; error?: string }>("analyze_lufs", { filePath: song.file_path });
+        if (r && r.ok && typeof r.gain === "number") { await (window as any).ether.songs.updateById(song.id, { gain_db: r.gain }); set++; }
+        else failed.push(song.title || song.file_path);
+      } catch { failed.push(song.title || song.file_path); }
       done++; setStatus("Analyzing... " + done + "/" + songs.length);
     }
-    setStatus("Done! Analyzed " + done + " songs."); setTimeout(() => setStatus(""), 4000);
+    setStatus(failed.length
+      ? `Analyzed ${set} of ${done}. ${failed.length} could not be analyzed and were left unchanged: ${failed.slice(0, 5).join(", ")}${failed.length > 5 ? ` and ${failed.length - 5} more` : ""}`
+      : `Done! Analyzed ${set} songs.`);
+    setTimeout(() => setStatus(""), failed.length ? 15000 : 4000);
   };
   const queueAll = () => { engine.addToQueue(filtered.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }))); window.dispatchEvent(new CustomEvent('ether:queue-changed')); };
   const filtered = songs.filter(s => {
