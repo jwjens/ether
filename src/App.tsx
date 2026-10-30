@@ -1905,6 +1905,8 @@ export default function App() {
     setAccountJoined(true); // completing onboarding means an account was signed in
     bootMarkAuthComplete();
     setAccountSignedIn(true); // session sign-in complete — gate can advance past the sign-in screen
+    // Main remembers it for the rest of this run, so a window reload never signs anyone out (electron/session-this-run.js).
+    try { (window as any).ether.invoke("account:gate-opened"); } catch {}
   };
 
   useEffect(() => {

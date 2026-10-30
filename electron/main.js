@@ -4637,7 +4637,7 @@ ipcMain.handle("account:was-on-air", () => _wasOnAir());
 ipcMain.handle("account:session-set", (_, token) => { try { return AccountSession.set(token); } catch (e) { return { ok: false, error: e.message }; } });
 // A sign-in that returned a session (Phase 1): keep it (Remember me = kept in protected storage; off = this run only).
 ipcMain.handle("account:session-start", (_, s, remember) => {
-  try { const r = AccountSession.setSession(s, { remember: remember !== false }); if (r.ok) accountRenewer().signedIn(); return r; }
+  try { const r = AccountSession.setSession(s, { remember: remember !== false }); if (r.ok) { accountRenewer().signedIn(); sessionThisRun.markOpened(); } return r; }
   catch (e) { return { ok: false, error: e.message }; }
 });
 // Has this computer kept a sign-in (valid or not)? Informational only: opening Ether always shows the sign-in screen first.
@@ -4657,6 +4657,7 @@ ipcMain.handle("account:sign-in-again", async (_, { email, password, remember } 
     if (!r.ok || !d.ok) return { ok: false, error: d.error === "invalid_credentials" ? "Email or password is incorrect." : (d.message || "Could not sign in. Please try again.") };
     const kept = d.session ? AccountSession.setSession(d.session, { remember: remember !== false }) : AccountSession.set(d.token, { remember: remember !== false });
     accountRenewer().signedIn();
+    sessionThisRun.markOpened();
     return { ok: true, stored: kept.stored };
   } catch (err) { return { ok: false, error: `Could not reach Ether's server: ${err.message}` }; }
 });
@@ -4687,7 +4688,11 @@ function _consumeRecentKeepSession() {
     return (Date.now() - ts) < 120000;
   } catch { return false; }
 }
-ipcMain.handle("account:resume-session", () => _consumeRecentKeepSession());
+// The gate this run already opened survives a window reload (electron/session-this-run.js); with no profile open there is
+// nothing to resume into, so EDGE RULE 1 still refuses.
+const sessionThisRun = require("./session-this-run").createSessionThisRun({ consumeKeepSession: _consumeRecentKeepSession });
+ipcMain.handle("account:resume-session", () => { try { if (P.isPending()) return false; } catch {} return sessionThisRun.resume(); });
+ipcMain.handle("account:gate-opened", () => { sessionThisRun.markOpened(); return true; });
 
 app.on("window-all-closed", () => {
   // Keep running on Windows/Linux (app lives in tray)
