@@ -144,6 +144,7 @@ import StudioEditor from "./components/StudioEditor";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
+import { IRIS_SHIPS_WITH_INSTALLER } from "./lib/irisShips";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
 type Panel = "live" | "imaging" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
@@ -3489,6 +3490,8 @@ export default function App() {
 
         {/* IRIS — far right; the ONE purple button (Iris's brand). Standard bar rectangle; replaces the
             old floating circle. Opens exactly what the circle opened (the chat panel). */}
+        {/* Hidden until Iris ships with the installer (src/lib/irisShips.ts; Jeff, 2026-10-30). */}
+        {IRIS_SHIPS_WITH_INSTALLER && (
         <button onClick={() => setIrisOpen(o => !o)} title="Iris — your assistant producer" style={{
           height: 36, padding: "0 14px", borderRadius: 0, marginLeft: 2, flexShrink: 0,
           background: irisOpen ? "#8868D8" : "transparent",
@@ -3500,6 +3503,7 @@ export default function App() {
           onMouseEnter={e => { if (!irisOpen) (e.currentTarget as HTMLElement).style.background = "color-mix(in srgb, #8868D8 16%, transparent)"; }}
           onMouseLeave={e => { if (!irisOpen) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
         >IRIS</button>
+        )}
 
         {/* Collapsed view-tabs → bottom-right hamburger menu (tablet/narrow) */}
         {viewport.bottomCollapsed && (
