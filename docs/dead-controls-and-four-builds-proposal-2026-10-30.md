@@ -109,5 +109,30 @@ its pop-out (PopoutRenderer.tsx:200 passes nothing).
 21. **Plan gates in the desktop use the old tiers** (Listener Analytics `requires="pro"`, Station Manager
     `requires="station"`) and do not line up with plans.json (Listener Analytics is local data).
 
-(The library/scheduling and the getting-started/main-screen chapters are still being verified; anything found there is
-added below.)
+### Added from the getting-started / main-screen / decks / shortcuts check
+22. **Settings → Users & Security → Delete and Remove PIN:** run behind `window.confirm`, which does nothing in the
+    installed app (SettingsPanel.tsx:4172, 4191; main.js:1823). (Change PIN with both boxes empty does remove a PIN.)
+23. **View → Deck A / Deck B / Deck C / Mic Deck:** toggle settings nothing reads; only Play Queue works (App.tsx:3812, 4144).
+24. **Board source "Announcement":** says "nothing fires yet" (sourceKinds.ts:27); **"Network"** source disabled (:60);
+    Configure Decks **Purpose** is saved but never read (DeckConfigurator.tsx:376); **Guest** deck meter can never move
+    (no `ether:guest-level` sender) and its ON reaches only an open Show+ window (FaderSection.tsx:283-293).
+25. **AUTO with nothing scheduled in the next 2 hours** asks through `window.confirm` (App.tsx:2455) — likely never shown
+    in the installed app, so AUTO falls back to MANUAL. UNVERIFIED (press AUTO on a station with an empty log).
+26. **Up Next:** empty text "Drag carts here or use GEN LOG" names a button and a drag that don't exist (UpNext.tsx:534);
+    right-click Play Next / Move Up / Move Down / Move to Bottom and drag-reorder change only the in-memory queue, which is
+    rebuilt from the log every 2 s, so they likely snap back (audiod/engine.js:2169, 2285-2301). UNVERIFIED.
+27. **Keyboard shortcuts:** Shift+/ opens two overlays at once (KeyboardHelp.tsx and App.tsx:3295); both list keys that
+    don't exist (N, F1–F4, F10, "F12 = help" — F12 is DevTools); G is labelled "Program Log" but opens the Play Log;
+    A, S and G also fire carts 17, 18 and 21 when the CARTS push-up is open.
+28. **Help → Check for Updates:** no message when already up to date; after "Later" the card never returns that session
+    (Updater.tsx:26-41, App.tsx:3355).
+29. **About:** says "free, open-source" (AboutPanel.tsx:202); **What's New** is a stale hard-coded changelog ("1.5.2
+    March 2026", :15-50, :177).
+30. **View → Reload (Ctrl+R) returns to the sign-in screen** mid-session (reload does not set the keep-session marker;
+    main.js:3681 vs 4690) — conflicts with "never signed out while running". UNVERIFIED.
+31. **New station → Solo / Standard / Live Radio** says it "sets your default deck layout" but nothing uses it
+    (App.tsx:1031). The onboarding "placement" step is never reached.
+32. **Station switcher hidden below desktop rank "station"** (ActiveStationBadge.tsx:76, 178): a catalog **Pro** license
+    (key `pro`, desktop rank 1) would not see it, though Pro is above Station in plans.json.
+
+(The library/scheduling chapters are still being verified; anything found there is added below.)
