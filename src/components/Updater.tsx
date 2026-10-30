@@ -14,9 +14,13 @@ interface UpdateInfo {
 type UpdateState =
   | { phase: "idle" }
   | { phase: "available"; info: UpdateInfo }
-  | { phase: "downloading"; progress: number; total: number; downloaded: number }
-  | { phase: "ready" }
-  | { phase: "error"; message: string };
+  | { phase: "downloading"; progress: number; total: number; downloaded: number; version?: string }
+  | { phase: "ready"; version?: string }
+  | { phase: "error"; message: string; version?: string };
+
+/** The version this update window is about, in whichever phase it is in. */
+const versionOf = (s: UpdateState): string | null =>
+  s.phase === "available" ? s.info.version : s.phase === "idle" ? null : s.version ?? null;
 
 // ── Hook ──────────────────────────────────────────────────────
 export function useUpdater() {
@@ -59,20 +63,24 @@ export function useUpdater() {
     return () => { clearTimeout(startup); clearInterval(poll); };
   }, [checkForUpdate]);
 
+  const versionRef = useRef<string | undefined>(undefined);
+  useEffect(() => { if (state.phase === "available") versionRef.current = state.info.version; }, [state]);
+
   const download = useCallback(async () => {
+    const version = versionRef.current;
     try {
-      setState({ phase: "downloading", progress: 0, total: 0, downloaded: 0 });
+      setState({ phase: "downloading", progress: 0, total: 0, downloaded: 0, version });
       // Listen for progress events from main process
       const handler = (window as any).ether.on("updater:progress", (data: any) => {
         if (data.percent !== undefined) {
-          setState({ phase: "downloading", progress: Math.round(data.percent), total: data.total ?? 0, downloaded: data.transferred ?? 0 });
+          setState({ phase: "downloading", progress: Math.round(data.percent), total: data.total ?? 0, downloaded: data.transferred ?? 0, version });
         }
       });
       await downloadUpdate();
       (window as any).ether.off("updater:progress", handler);
-      setState({ phase: "ready" });
+      setState({ phase: "ready", version });
     } catch (e) {
-      setState({ phase: "error", message: String(e) });
+      setState({ phase: "error", message: String(e), version });
     }
   }, []);
 
@@ -99,7 +107,16 @@ export function UpdateBanner({
   onRestart: () => void;
   onDismiss: () => void;
 }) {
+  const [details, setDetails] = useState(false);
   if (state.phase === "idle") return null;
+  const version = versionOf(state);
+  // Details opens the release notes beside the update; it never stands between the operator and Update / Restart.
+  const detailsBtn = version ? (
+    <button onClick={() => setDetails(true)} style={{
+      padding: "9px 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+      color: "var(--text-secondary)", fontSize: 12, cursor: "pointer",
+    }}>Details</button>
+  ) : null;
 
   const fmt = (bytes: number) => {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
@@ -180,6 +197,7 @@ export function UpdateBanner({
               >
                 Later
               </button>
+              {detailsBtn}
             </div>
           </div>
         </>
@@ -208,6 +226,7 @@ export function UpdateBanner({
               {fmt(state.downloaded)} / {fmt(state.total)}
             </div>
           )}
+          {detailsBtn && <div style={{ marginTop: 10 }}>{detailsBtn}</div>}
         </div>
       )}
 
@@ -223,10 +242,11 @@ export function UpdateBanner({
               <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>Restart Ether to apply the update</div>
             </div>
           </div>
+          <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={onRestart}
             style={{
-              width: "100%", padding: "9px 0", borderRadius: 0,
+              flex: 1, padding: "9px 0", borderRadius: 0,
               background: "var(--accent-green)", border: "none",
               color: "#000", fontSize: 12, fontWeight: 700,
               cursor: "pointer", letterSpacing: "0.02em",
@@ -234,6 +254,8 @@ export function UpdateBanner({
           >
             Restart & Update
           </button>
+          {detailsBtn}
+          </div>
         </div>
       )}
 
@@ -242,11 +264,85 @@ export function UpdateBanner({
         <div style={{ padding: "14px 16px" }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-red)", marginBottom: 6 }}>Update failed</div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 10, lineHeight: 1.5 }}>{state.message}</div>
+          <div style={{ display: "flex", gap: 8 }}>
           <button onClick={onDismiss} style={{ padding: "7px 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>
             Dismiss
           </button>
+          {detailsBtn}
+          </div>
         </div>
       )}
+      {details && version && <ReleaseNotesPopup version={version} onClose={() => setDetails(false)} />}
+    </div>
+  );
+}
+
+type NotesAnswer =
+  | { ok: true; from: string; to: string; releases: { version: string; name: string; date: string | null; body: string }[]; missing: string[] }
+  | { ok: false; error: string };
+
+// ── Details: what was added and fixed, every version from this one up to the update, newest first ──
+// Asked only when Details is clicked (main: updater:release-notes → electron/release-notes.js); a failure is said here
+// and never touches the update.
+export function ReleaseNotesPopup({ version, onClose }: { version: string; onClose: () => void }) {
+  const [answer, setAnswer] = useState<NotesAnswer | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve((window as any).ether.invoke("updater:release-notes", version))
+      .then((a: NotesAnswer) => { if (live) setAnswer(a && typeof a === "object" ? a : { ok: false, error: "no answer" }); })
+      .catch((e: unknown) => { if (live) setAnswer({ ok: false, error: String(e) }); });
+    return () => { live = false; };
+  }, [version]);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div role="dialog" aria-label={`What's in Ether ${version}`} onClick={e => e.stopPropagation()} style={{
+        width: 560, maxWidth: "calc(100vw - 32px)", maxHeight: "80vh", display: "flex", flexDirection: "column",
+        background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)", boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "12px 16px", borderBottom: "1px solid var(--border-primary)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
+            What's in Ether {version}{answer?.ok && answer.releases.length > 1 ? ` (everything since ${answer.from})` : ""}
+          </div>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16 }}>×</button>
+        </div>
+        <div style={{ padding: "12px 16px", overflowY: "auto", fontSize: 12, lineHeight: 1.55, color: "var(--text-secondary)" }}>
+          {!answer && <div>Loading the release notes…</div>}
+          {answer && !answer.ok && (
+            <div style={{ color: "var(--accent-red)" }}>
+              The release notes could not be loaded ({answer.error}). The update itself is not affected.
+            </div>
+          )}
+          {answer?.ok && answer.missing.length > 0 && (
+            <div style={{ color: "var(--accent-red)", marginBottom: 10 }}>No release notes were found for Ether {answer.missing.join(", ")}.</div>
+          )}
+          {answer?.ok && answer.releases.map(r => (
+            <div key={r.version} style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
+                {r.name}{r.date ? <span style={{ fontWeight: 400, color: "var(--text-tertiary)", fontSize: 11 }}> · {new Date(r.date).toLocaleDateString()}</span> : null}
+              </div>
+              <NotesBody text={r.body} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Release notes are Markdown; shown as plain text with headings bold and list items as bullets. */
+function NotesBody({ text }: { text: string }) {
+  if (!text) return <div style={{ color: "var(--text-tertiary)" }}>This release has no notes.</div>;
+  const plain = (s: string) => s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  return (
+    <div style={{ marginTop: 4 }}>
+      {text.split(/\r?\n/).map((line, i) => {
+        const h = line.match(/^#{1,6}\s+(.*)$/);
+        if (h) return <div key={i} style={{ fontWeight: 700, color: "var(--text-primary)", marginTop: 8 }}>{plain(h[1])}</div>;
+        const li = line.match(/^\s*[-*]\s+(.*)$/);
+        if (li) return <div key={i} style={{ paddingLeft: 14, textIndent: -10 }}>• {plain(li[1])}</div>;
+        return line.trim() ? <div key={i}>{plain(line)}</div> : <div key={i} style={{ height: 6 }} />;
+      })}
     </div>
   );
 }

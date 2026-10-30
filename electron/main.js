@@ -9546,6 +9546,13 @@ ipcMain.handle("updater:check", async () => {
   } catch { return { available: false }; }
 });
 
+// Update window → Details: the release notes of every version from the running one up to the offered one, newest
+// first (electron/release-notes.js). Asked only when Details is clicked; the update never waits on it.
+ipcMain.handle("updater:release-notes", async (_, to) => {
+  try { return await require("./release-notes").releaseNotesFor({ from: app.getVersion(), to: String(to || "") }); }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle("updater:download", async () => {
   if (!autoUpdater) return;
   autoUpdater.on("download-progress", (progress) => {
