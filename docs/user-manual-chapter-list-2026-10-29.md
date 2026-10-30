@@ -48,3 +48,37 @@ console — separate products, not the Ether build.
 
 Open while writing: a chapter whose feature turns out unbuilt or unreachable in this build is dropped and named in the
 draft report, not written up.
+
+## Jeff's answers (2026-10-30, verbatim)
+
+"1. Include the web dashboard, the listener page and the platform console in the manual. For every feature in the
+manual, note the plan tier needed to use it (Local, Station, Pro, Unlimited), taken from config/plans.json, not guessed.
+2. Yes, describe profiles exactly as they work today, with no claimed restrictions. 3. Include e836590 in 4.6.69.
+Before writing the draft: for every chapter, confirm the feature actually works in the current build. If a menu entry
+opens a placeholder or an unfinished screen (check Iris, Screens and the Show+ DAW especially), drop that chapter and
+list what you dropped."
+
+Added chapters: 25 The web dashboard, 26 The listener page, 27 The platform console.
+
+## Verification (static: traced door → component → working code; the app was not run)
+
+- **Iris — DROPPED.** The IRIS button opens a chat panel for a separate Iris app (`src/components/IrisBadge.tsx:4-8`).
+  The installer does not ship Iris (`electron-builder.json`, `package.json`: no Iris) and Ether never starts it (no
+  spawn in `electron/`), so in an installed copy the panel can only say "offline"
+  (`IrisBadge.tsx` send(): "I'm not connected right now…").
+- **Show+ DAW — DROPPED.** "To Deck" (`src/components/StudioPro.tsx:4712`, `sendToDeck` :2981) renders the mix to a
+  browser `blob:` URL and dispatches `ether:deck-load`, which nothing listens for (no listener in `src/` or `electron/`)
+  — the send does nothing. Its discard warning (:1513) names Library and jingle/sweeper-pool exits that do not exist in
+  the component. Export WAV / stems / session save-open are real, but the screen's main exit is unfinished.
+- **Screens — KEPT (pending the chapter agent's full check).** ☰ → Screens opens the Screen Builder
+  (`PopoutRenderer.tsx:220-222` → `ScreenSurface.tsx`): dockview layout, EDIT/LIVE, saved layouts.
+- Remaining chapters: being traced chapter by chapter (agents), results to be added here.
+
+## Queued: Part 3 — website (Jeff, 2026-10-30; starts after the manual is approved)
+
+"The whole site at https://ether-technologies.com/ (Cloudflare) is outdated. Rebuild it to match Ether as it is today.
+1. Use the approved manual as the source for features, and config/plans.json for plans and pricing: Local, Station,
+Pro, Unlimited, the listener add-on, the 3+ station discount and annual billing. No free plan; every new account starts
+with a 15-day trial, no card needed. 2. Include the signup page: replace the "free account" wording to match. 3. Show me
+the page list first. After I approve it, build everything and show me screenshots of every page at desktop and phone
+width before deploying. 4. Deploy only when I say go. Don't change anything else."
