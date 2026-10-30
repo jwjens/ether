@@ -135,4 +135,28 @@ its pop-out (PopoutRenderer.tsx:200 passes nothing).
 32. **Station switcher hidden below desktop rank "station"** (ActiveStationBadge.tsx:76, 178): a catalog **Pro** license
     (key `pro`, desktop rank 1) would not see it, though Pro is above Station in plans.json.
 
-(The library/scheduling chapters are still being verified; anything found there is added below.)
+### Added from the library / scheduling / spots check
+33. **Tools → Smart Scheduler — whole screen does not affect scheduling (chapter section dropped):** its AI button calls
+    the AI service with no key (SmartScheduler.tsx:30-60); rules save to this window's storage only, the database write
+    is marked "intentionally broken … deferred" (:203-217); the generator never reads them.
+34. **Categories → "⏱ Scan Durations":** calls `get_file_duration`, which has no handler — every song comes back
+    "failed" (CategoriesTab.tsx:64); the clock preview uses the same call silently (ClocksTab.tsx:328).
+35. **Clock row CHAIN STP/SEG:** saved, never read by Generate (ClocksTab.tsx:471; generate-core.js:116).
+36. **Rotation rules:** STRICT/SOFT and "Max songs in a row from same category" are never read by the scheduler
+    (scheduler-core.js:173-184); the retired gender rule may still show (SettingsPanel.tsx:2842 has no deleted filter).
+37. **Create Show wizard:** picking an existing music category is not saved (CreateShowWizard.tsx:179-191).
+38. **Program Log → ⚙ Shows & Dayparts → delete:** calls a function that does not exist (`shows['delete-by-id']`,
+    ProgramLog.tsx:1558) — the click fails; editing a show there drops its start/end minutes (:1532-1538).
+39. **Library → "Import from Spotify" and "NexGen / ENCO":** create songs with no audio (main.js:10935-10960;
+    NexGenImport.tsx:120); the way to attach files later was removed (preload.js:290).
+40. **Library → Normalize:** a failed analysis silently writes gain −14 dB (main.js:8644-8647) — a hidden
+    sound-affecting default.
+41. **Cue Editor key hints [I] [N] [O] [U]:** shown but only Space works (TrackEditor.tsx:620-633).
+42. **Spots:** Import Traffic CSV makes spots with no audio, which never air, and there is no way to attach audio to an
+    existing spot; "⚠ WON'T AIR" flags spots with no category, but "Any spot" breaks still pick them (Spots.tsx ~661 vs
+    generate-core.js:45-50).
+43. **Every delete/confirm behind `window.confirm`** (library bulk "Assign category…", category Delete, show Del,
+    spot and spot-category Delete, Users & Security Delete/Remove PIN, AUTO with an empty log): Ether's own code says
+    `window.confirm` does nothing in the installed app (main.js:1823, ConfirmDialog.tsx:1). UNVERIFIED — one check
+    settles all of them: in an installed build, right-click a spot → Delete.
+44. **Program Log → PDF Report:** locked to the old "Studio" tier (ProgramLog.tsx ~869-880); not a plans.json feature.
