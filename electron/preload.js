@@ -316,6 +316,10 @@ contextBridge.exposeInMainWorld("ether", {
     // A Sweepers dropdown changed: re-place the station's pending sweepers by the assignments as they now stand.
     replaceSweepers: (stationId) => ipcRenderer.invoke("sweepers:replace", stationId),
   },
+  // Show+ DAW → deck: the rendered WAV is written and loaded on deck A/B/C by main (electron/showplus-send.js).
+  showplus: {
+    sendToDeck: (deck, wav, stationId) => ipcRenderer.invoke("showplus:send-to-deck", { deck, wav, stationId }),
+  },
   fs: {
     readFile: (fp) => ipcRenderer.invoke("fs:readFile", fp),
     readFileTail: (fp, n) => ipcRenderer.invoke("fs:readFileTail", fp, n),

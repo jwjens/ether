@@ -5433,7 +5433,9 @@ ipcMain.on("ui:broadcast", (_evt, msg) => {
   }
 });
 
-ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, stationId) => {
+ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, stationId) => loadDeckFile(deck, filePath, title, artist, gainDb, stationId));
+// THE ONE DECK LOAD (audio:load and Show+ DAW → deck share it; electron/showplus-send.js).
+async function loadDeckFile(deck, filePath, title, artist, gainDb, stationId) {
   // Item 10 Phase 2 Step 1: the resolved load goes to the daemon when enabled (it owns the
   // engine); otherwise the in-process addon. File resolution (the row's stored file — nothing is fetched on its own,
   // electron/catalogue-moves.js) stays here; only the final load is forwarded.
@@ -5445,6 +5447,16 @@ ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, st
   const resolved = await resolveLocalAudioPath(filePath);
   if (!resolved.ok) { logStartup(`[audio:load] deck ${deck} not loaded: ${resolved.error}`); return false; }
   return doLoad(resolved.filePath);
+}
+
+// SHOW+ DAW → DECK (Jeff, 2026-10-30): the DAW's rendered mix, written into this account's folder and loaded on the deck
+// the operator picked, through the same load as every other door. electron/showplus-send.js.
+ipcMain.handle("showplus:send-to-deck", async (_, req) => {
+  try {
+    return await require("./showplus-send").sendMixToDeck(
+      { deck: req?.deck, wav: req?.wav, stationId: req?.stationId ?? getActiveStationId() },
+      { dir: path.join(P.profileDir(P.activeKey()), "showplus-sends"), fs, load: loadDeckFile });
+  } catch (e) { logStartup(`[showplus:send-to-deck] ${e.message}`); return { ok: false, reason: "error", error: e.message }; }
 });
 
 // Resolve a song's stored file_path to a locally-loadable path (used by the cue editor so it reads

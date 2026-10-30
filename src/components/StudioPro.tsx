@@ -1510,7 +1510,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     const ether = (window as any).ether;
     if (!ether?.on) return;
     const h = ether.on("studio:confirm-close", () => {
-      const ok = window.confirm("Discard this Show+ session?\n\nRegions you haven't sent to a deck, the Library, or a jingle/sweeper pool will be lost.");
+      const ok = window.confirm("Discard this Show+ session?\n\nRegions you haven't sent to a deck will be lost.");
       if (ok) { try { ether.invoke("studio:force-close"); } catch { /* ignore */ } }
     });
     return () => { try { ether.off("studio:confirm-close", h); } catch { /* ignore */ } };
@@ -2997,11 +2997,11 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     setStatus(`Rendering for Deck ${deck}...`);
     const rendered = await offline.startRendering();
     const wav = encodeWav(rendered);
-    const blob = new Blob([wav], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
-    window.dispatchEvent(new CustomEvent("ether:deck-load", { detail: { deck, filePath: url, title: `StudioPro Mix` } }));
-    setStatus(`✓ Sent to Deck ${deck}`);
-  }, [tracks, anySolo, totalDurMs]);
+    // A deck plays a file: main writes the mix into this account's folder and loads it on the deck through the same
+    // load every other door uses (electron/showplus-send.js). The old browser-only blob URL reached no deck.
+    const r = await (window as any).ether?.showplus?.sendToDeck?.(deck, new Uint8Array(wav), stationId ?? null);
+    setStatus(r?.ok ? `✓ Sent to Deck ${deck}` : `Couldn't send to Deck ${deck}${r?.reason ? ` (${r.reason})` : ""}`);
+  }, [tracks, anySolo, totalDurMs, stationId]);
 
   // ── Drag: region move / trim ──────────────────────────────────
 
