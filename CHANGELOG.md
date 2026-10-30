@@ -18,9 +18,8 @@
   never replaced by another; the station keeps running on its own clock. Existing devices carry over.
 - **Remote Link through Ether's relay:** pick the computer and station; no address, port or router setup. The receiving
   computer allows a new sender once and remembers it. Typing an address stays as an advanced option.
-- **Stays signed in:** a computer that is set up starts straight to the station, renews its sign-in in the background
-  while it runs, and asks for a sign-in only on a new computer, after Sign Out, or after it is removed from the account.
-  If renewal can't happen, only account features pause (Health Monitor → Account sign-in). Remember me is on by default.
+- **Stays signed in:** while Ether runs, the sign-in renews silently in the background; nothing ever signs anyone out
+  or shows a sign-in screen. (When Ether is opened, the account sign-in screen comes first — 4.6.69.) If renewal can't happen, only account features pause (Health Monitor → Account sign-in). Remember me is on by default.
 - **The board:** real console fader caps; double-click a fader for 0 dB; strips never get cut off — the board scrolls
   sideways with Master Out pinned and a FADERS overview; decks A, B and C can collapse into one strip that follows the
   playing deck (saved per computer and in show presets).
