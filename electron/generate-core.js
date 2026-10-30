@@ -36,6 +36,7 @@ const segue = require('../audiod/segue-overlap.js');      // the station's segue
 const SPOT_SELECT = `SELECT id, title, advertiser, file_path, length_sec, last_played_at, max_plays_day
    FROM spots
    WHERE station_id = ? AND deleted_at IS NULL AND is_active = 1 AND file_path IS NOT NULL
+     AND spot_category_id IS NOT NULL   -- the Spots screen marks a spot with no category "WON'T AIR": never pick one
      AND (? IS NULL OR spot_type = ?)
      AND (start_date IS NULL OR start_date = '' OR start_date <= ?)
      AND (end_date   IS NULL OR end_date   = '' OR end_date   >= ?)`;
@@ -45,6 +46,7 @@ const SPOT_SELECT = `SELECT id, title, advertiser, file_path, length_sec, last_p
 const SPOT_SELECT_BY_CATEGORY = `SELECT id, title, advertiser, file_path, length_sec, last_played_at, max_plays_day
    FROM spots
    WHERE station_id = ? AND deleted_at IS NULL AND is_active = 1 AND file_path IS NOT NULL
+     AND spot_category_id IS NOT NULL   -- "Any spot" (NULL) breaks too: a spot marked WON'T AIR never airs (Jeff, 2026-10-30)
      AND (? IS NULL OR spot_category_id = ?)
      AND (start_date IS NULL OR start_date = '' OR start_date <= ?)
      AND (end_date   IS NULL OR end_date   = '' OR end_date   >= ?)`;
@@ -359,5 +361,5 @@ module.exports = {
   buildScheduleCtx: _buildScheduleCtx,
   generateDayRows:  _generateDayRows,
   resetGenSlice,
-  _test: { _genMaybeYield, _pickSpot, _localDayStr, GEN_SLICE_MS },
+  _test: { _genMaybeYield, _pickSpot, _localDayStr, GEN_SLICE_MS, SPOT_SELECT, SPOT_SELECT_BY_CATEGORY },
 };
