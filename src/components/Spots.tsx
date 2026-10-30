@@ -334,6 +334,25 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
     } catch (e) { console.error("Traffic import error:", e); setStatus("Import failed: " + String(e)); setImporting(false); }
   };
 
+  // ATTACH / REPLACE AUDIO (Jeff, 2026-10-30: "Imported traffic spots: let audio be attached so they can air").
+  // Import Traffic CSV makes spots with no audio, and Generate only places a spot that has a file. The file is copied
+  // into the audio library like every spot import, its real length probed, and the spot (and its library asset) updated.
+  const attachAudio = async () => {
+    if (!editing) return;
+    const picked = await open({ multiple: false, title: "Choose this spot's audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
+    const fp = Array.isArray(picked) ? picked[0] : picked;
+    if (!fp) return;
+    const lib = await importIntoAudioLibrary(fp);
+    if (!lib) { setStatus("Couldn't copy that file into the audio library."); return; }
+    const length_sec = await probeLen(lib);
+    try {
+      await (window as any).ether.spots.updateById(editing.id, { file_path: lib, ...(length_sec != null ? { length_sec } : {}) });
+      setEditing({ ...editing, file_path: lib, ...(length_sec != null ? { length_sec } : {}) });
+      setStatus(`Audio attached to "${editing.title}".`); setTimeout(() => setStatus(""), 4000);
+      load();
+    } catch (e) { setStatus("Couldn't attach the audio: " + String(e)); }
+  };
+
   const save = async () => {
     if (!editing || !editing.title) return;
     if (editing.id) {
@@ -547,6 +566,17 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
             </select>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>Audio:</span>
+            <span title={editing.file_path || ""} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontSize: "var(--t-body)",
+              color: editing.file_path ? "var(--text-secondary)" : "#fbbf24" }}>
+              {editing.file_path ? editing.file_path.split(/[\\/]/).pop() : "No audio — this spot can't air until you attach its audio"}
+            </span>
+            <button onClick={() => void attachAudio()}
+              style={{ padding: "6px 12px", borderRadius: 0, fontSize: "var(--t-body)", fontWeight: 700, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}>
+              {editing.file_path ? "Replace audio…" : "Attach audio…"}
+            </button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>Spot category:</span>
             <select value={editing.spot_category_id ?? ""} onChange={e => setEditing({ ...editing, spot_category_id: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
               style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
@@ -657,9 +687,9 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
                   >
                     <td style={{ padding: "10px 14px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>
                       {s.title}
-                      {(!s.is_active || s.spot_category_id == null) && (
+                      {(!s.is_active || s.spot_category_id == null || !s.file_path) && (
                         <span
-                          title={`This spot will not be placed by Generate — ${!s.is_active ? "it is inactive" : ""}${!s.is_active && s.spot_category_id == null ? " and " : ""}${s.spot_category_id == null ? "it has no category (category breaks pull spots by category)" : ""}. Edit it to fix.`}
+                          title={`This spot will not be placed by Generate — ${[!s.is_active && "it is inactive", s.spot_category_id == null && "it has no category", !s.file_path && "it has no audio (Edit → Attach audio…)"].filter(Boolean).join(" and ")}. Edit it to fix.`}
                           style={{ marginLeft: 8, padding: "1px 6px", fontSize: "var(--t-micro)", fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.05em", verticalAlign: "middle" as any }}
                         >⚠ WON'T AIR</span>
                       )}

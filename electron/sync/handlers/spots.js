@@ -200,8 +200,16 @@ function spotsUpdate(db, uuid, patch, out) {
     console.log(`[spots] "${existing.title}" deactivated - ${(retracted && retracted.pendingLog) || 0} future airing(s) retracted`);
   }
   if (out) out.retracted = retracted;
-  return spotsGet(db, uuid);
+  const saved = spotsGet(db, uuid);
+  // The Spots screen lists a spot's title and audio from its library asset. An edit that attaches or replaces the audio
+  // (or renames it) must reach that asset too, or the spot airs a file its own panel says it does not have
+  // (Jeff, 2026-10-30: "Imported traffic spots: let audio be attached so they can air").
+  if (assetChangedBy(patchFields)) mirrorAsset(db, TABLE, saved);
+  return saved;
 }
+
+/** Does an edit of these fields change what the spot's library asset shows (its audio, title or length)? */
+function assetChangedBy(fields) { return fields.some(k => k === 'file_path' || k === 'title' || k === 'length_sec'); }
 
 function spotsDelete(db, uuid, stationId) {
   validateScope();
@@ -309,4 +317,5 @@ module.exports = {
   spotsUpdateById,
   spotsDeleteById,
   retractSpotReferences,
+  assetChangedBy,
 };
