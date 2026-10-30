@@ -296,6 +296,10 @@ pub fn audio_output_patch_state(station_id: u32) -> String {
 
 /// THE ENGINE SOURCE FINGERPRINT, in the binary as one findable string (native/build.rs): the packaging reads it from the
 /// file and compares it with the source being packaged (build-resources/engine-source-fp.js); the daemon logs it.
+/// #[used] + black_box below KEEP it whole (4.6.68): on x86_64 macOS LLVM folded `.to_string()` of the literal into
+/// movabs immediates, nothing referenced the string any more, and LTO + dead-strip dropped it — the Intel engine
+/// "carries no source fingerprint". #[used] emits .no_dead_strip (Mach-O) / SHF_GNU_RETAIN (ELF).
+#[used]
 pub static ENGINE_SOURCE_MARK: &str = concat!("ETHER_ENGINE_SOURCE_FP:", env!("ETHER_ENGINE_SOURCE_FP"), ":END");
 
 /// The engine source fingerprint this binary was built from (16 hex digits).
@@ -304,7 +308,7 @@ pub fn audio_engine_source_fp() -> String { env!("ETHER_ENGINE_SOURCE_FP").to_st
 
 /// The whole mark, so it is kept in the binary and readable from outside without loading it.
 #[napi]
-pub fn audio_engine_source_mark() -> String { ENGINE_SOURCE_MARK.to_string() }
+pub fn audio_engine_source_mark() -> String { std::hint::black_box(ENGINE_SOURCE_MARK).to_string() }
 
 /// Every output device on this computer with its channel count and rate — the Patch Bay's columns (one per channel pair).
 #[napi]
