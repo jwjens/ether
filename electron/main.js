@@ -7906,7 +7906,7 @@ ipcMain.handle("links:account", async () => {
     try {
       for (const r of getDb().prepare(`SELECT s.uuid AS uuid, k.value AS value FROM station_config_kv k JOIN stations s ON s.id = k.station_id
                                          WHERE k.key = 'jukebox_request_url' AND k.deleted_at IS NULL AND s.deleted_at IS NULL`).all()) {
-        const v = String(r.value || "").trim().toLowerCase();
+        const v = require("./jukebox-slug").jukeboxSlug(r.value);   // the name, from a name or a full address
         if (v) jukeboxSlugs[r.uuid] = v;
       }
     } catch { /* no jukebox settings — no jukebox links */ }

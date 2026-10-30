@@ -43,6 +43,7 @@ import { useActiveStation } from "../hooks/useActiveStation";
 import { getLocalArt, fetchMusicStoreArt } from "../lib/albumArt";
 import { pushJukeboxState } from "../lib/ccData";
 import { idsFromStoredList } from "../lib/refValue";
+import { jukeboxSlug } from "../lib/jukeboxSlug";
 
 // ── Payment layer (08-04 §4) — kept as the seam, still free ────────────────────────────────────────
 // The pick path calls authorize() and enqueues ONLY on ok:true, so a donation/card step drops in here
@@ -404,7 +405,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         // dependent query effects do not re-run every 4 seconds.
         setCategoryIds(prev => (prev.length === ids.length && prev.every((v, i) => v === ids[i]) ? prev : ids));
         setRequestUrl(jukeboxPublicUrl(get("jukebox_request_url")));
-        setRequestSlug(String(get("jukebox_request_url") ?? "").trim().toLowerCase());
+        setRequestSlug(jukeboxSlug(get("jukebox_request_url")) ?? "");   // the name, from a name or a full address
         setLicenseKey(String(get("license_key") ?? "").trim());
         setChannelOn(chOn);
       } catch { if (!stop) setCategoryIds([]); }

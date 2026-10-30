@@ -6,6 +6,7 @@ import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./prov
 import { hasEngine, getEngine } from "../audio/engine-registry";
 import { parseParkSoundLast } from "./parkSound";
 import { listenReady, storedNumber } from "./parkListenSettings";
+import { jukeboxSlug } from "./jukeboxSlug";
 
 // Control Center data mirror (Phase 2). Pushes install-owned table rows up so the
 // dashboard can view them, and applies remote dashboard edits back through the local
@@ -96,7 +97,8 @@ export async function pushJukeboxPool(
     const kv: any[] = (r && r.rows) || [];
     const get = (k: string) => kv.find(x => x.key === k)?.value;
 
-    const slug = String(get("jukebox_request_url") ?? "").trim().toLowerCase();
+    // the NAME, whether the operator typed "party" or a full https:// address (src/lib/jukeboxSlug.ts)
+    const slug = jukeboxSlug(get("jukebox_request_url"));
     if (!slug) return;   // no public URL configured → nothing to publish, and no QR to scan either
 
     let categoryIds: number[] = [];
