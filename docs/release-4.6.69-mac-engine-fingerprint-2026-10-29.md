@@ -78,7 +78,7 @@ The workflow is not changed.
     daemon_started=true daemon_log_staged=true station_count=0 air_isolated=true`; exit 0. The staged `ether-engine.exe`
     in the temp profile was still running after the smoke exited (pid 24856). Only that process was stopped, and the
     temp folder was deleted.
-  - The full side-by-side check from this morning (queue from today's log, sign-in first on a set-up computer) was **not**
+  - The full side-by-side check from this morning (queue from today's log, sign-in first on a computer that keeps a sign-in) was **not**
     repeated. Only the engine binary changed since then; the app code is the same.
 
 ### When Jeff says Azure is Active — the release run
@@ -93,8 +93,9 @@ The workflow is not changed.
 ### Draft release notes (operator-facing — for Jeff to edit before publishing)
 
 The last published release is **4.6.57**, and 4.6.68 was never published, so these notes cover everything in CHANGELOG
-`[4.6.68]` + `[4.6.69]`. The 4.6.68 entry "Stays signed in … starts straight to the station" is **reversed** by 4.6.69,
-so it is left out.
+`[4.6.68]` + `[4.6.69]`. Sign-in is described as Jeff ruled (2026-10-29): 4.6.69 did not reverse "stays signed in". When
+Ether is opened, the sign-in screen comes first. While Ether runs, the sign-in renews silently and nothing ever signs
+anyone out or shows a sign-in screen. Both are said.
 
 > **4.6.69 — Patch Bay, Remote Link through Ether, and Settings that opens at once**
 >
@@ -107,14 +108,18 @@ so it is left out.
 >   Decks A, B and C can collapse into one strip that follows the playing deck.
 > - **Settings** (was Preferences) has its own sections for Remote Link, Jukebox, Park Page and Audio Devices.
 > - **Settings → Links:** every public page of your account and stations, with Open and Copy.
+> - **Stays signed in:** while Ether runs, your sign-in renews silently in the background. Nothing ever signs you out
+>   or shows a sign-in screen. If it can't renew, only account features pause (Health Monitor → Account sign-in).
+>   Remember me is on by default.
 >
 > **Fixed**
 > - Settings opens at once. It no longer freezes Ether for several seconds.
-> - Opening Ether shows the account sign-in screen first.
+> - The account sign-in screen comes first whenever Ether is opened.
 > - Your sign-in is kept in this computer's protected storage, never in the station database or a backup.
 > - The board's remove button (−) takes a channel off in one click, even with a Link input or Park mic patched on it.
 >
 > After updating, fully close Ether and open it again so the audio engine updates too.
 
-**Conflict to flag (not acted on):** CLAUDE.md rule 1 (Jeff, 2026-10-28) says a set-up computer starts straight to the
-station. 4.6.69's changelog says sign-in comes first, every time. One of the two needs updating.
+**Resolved (Jeff, 2026-10-29):** CLAUDE.md rule 1 now reads: when Ether is opened, the account sign-in screen comes
+first; while Ether is running, nobody is ever signed out and no sign-in screen ever appears, because the sign-in renews
+silently in the background.
