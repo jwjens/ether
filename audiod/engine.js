@@ -2282,14 +2282,39 @@ class DaemonEngine {
 
   // queue:reorder — move a pending entry to toIndex (clamped into the pending region; never above a
   // bound/cued head entry). No-op if unknown, bound, or already there.
+  //
+  // ON THE LOG READER THE MOVE IS MADE IN THE LOG (dead-controls item 26). The queue is rebuilt from generated_schedule
+  // every 2 s, so a move made only here snapped back. The log rows in Up Next now trade places in the log, the way the
+  // Program Log moves a row — one transaction, stamped source='operator' so Generate keeps them (audiod/queue-log-order.js).
+  // A move the log refuses (a row aired or was regenerated meanwhile) is undone here too and said in the log, never faked.
   intentReorder(qid, toIndex) {
     if (!qid || this.boundQids.has(qid)) return false;
     const idx = this.queue.findIndex(it => it.qid === qid);
     if (idx < 0) return false;
+    const before = [...this.queue];
     const [item] = this.queue.splice(idx, 1);
     const lo = this._pendingStart();
     const dest = Math.max(lo, Math.min(Number.isFinite(toIndex) ? toIndex : this.queue.length, this.queue.length));
     this.queue.splice(dest, 0, item);
+    if (this._logReaderOn() && item.schedId != null) {
+      const ids = this.queue.filter(q => !this.boundQids.has(q.qid) && q.schedId != null).map(q => q.schedId);
+      let res;
+      try { res = require("./queue-log-order").applyLogReorder(this.db, this.stationId, ids); }
+      catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      if (!res.ok) {
+        this.queue = before;
+        this._log(`queue move refused: "${item.title || "(untitled)"}" — ${res.error}`);
+        this.emit("queue", { stationId: this.stationId, items: this.queue });
+        return false;
+      }
+      if (res.moved) {
+        this._log(`queue move: "${item.title || "(untitled)"}" moved in the log (${res.moved} row(s) traded places)`);
+        try { this.emit("log-row-moved", { stationId: this.stationId, rowId: item.schedId, title: item.title || "", moved: res.moved }); } catch {}
+      }
+      this.emit("queue", { stationId: this.stationId, items: this.queue });
+      Promise.resolve().then(() => this._refillFromLog({ force: true, why: "queue:reorder" })).catch(() => {});
+      return true;
+    }
     this.emit("queue", { stationId: this.stationId, items: this.queue });
     return true;
   }

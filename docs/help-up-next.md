@@ -21,6 +21,18 @@ entries are the songs already cued on the standby decks; after them come the row
 
 The Program Log shows the gap the X left. Fill Day (or the next Generate) can fill it.
 
+## Changing the order (Play Next, Move Up, Move Down, Move to Bottom, drag)
+
+1. Right-click a song in Up Next.
+2. Choose **Play Next** (it goes first after the decks already cued), **Move Up**, **Move Down** or **Move to Bottom**.
+   Or drag the song to where you want it.
+3. The order changes in Up Next **and in the log** — the Program Log shows the same order, and it stays: Fill Day keeps
+   rows you moved.
+
+- The songs trade places in the log: each takes the time slot of the place it moved to, like **Move** in the Program Log.
+- A song already loaded on a deck can't be moved; move one below it.
+- If a song aired or the log was rebuilt while you were moving, the move is refused and Up Next shows the log as it is.
+
 ## Good to know
 - Ether keeps a record of every song that goes to air: its log row, its category and the computer that played it.
   If anything ever airs twice, or a row that aired is changed later, the **Health Monitor's Alerts** list says so.

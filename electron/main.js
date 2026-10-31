@@ -1410,11 +1410,11 @@ if (AUDIO_DAEMON_DESIRED) {
       } else if (m.event === "alert") {
         // Phase 1: the engine detected and reports; one alert, every place (electron/health-alerts.js).
         try { _alerts.raise(m.kind, m); } catch {}
-      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed" || m.event === "position-authority" || m.event === "spot-missed" || m.event === "log-row-removed") {
+      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed" || m.event === "position-authority" || m.event === "spot-missed" || m.event === "log-row-removed" || m.event === "log-row-moved") {
         // logreader-missed / spot-missed = the daemon stamped rows 'missed' (engine.js:1342); an
         // operator write = a row inserted by a deck-load; log-row-removed = the Up Next X took a row out of the log.
         // The Program Log re-reads on these.
-        if (m.event === "logreader-missed" || m.event === "spot-missed" || m.event === "logreader-operator-write" || m.event === "log-row-removed") _scheduleChanged(m.stationId, m.event);
+        if (m.event === "logreader-missed" || m.event === "spot-missed" || m.event === "logreader-operator-write" || m.event === "log-row-removed" || m.event === "log-row-moved") _scheduleChanged(m.stationId, m.event);
         // A show ran out of music: the one automatic Generate (Jeff, 2026-10-19). The floor is still reported below.
         if (m.event === "logreader-floor" && m.reason === "waiting:log-ended-inside-show") _outOfMusicRegenerate(m.stationId).catch(() => {});
         // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
