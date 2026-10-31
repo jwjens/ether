@@ -5432,7 +5432,7 @@ ipcMain.on("console:emit", (_evt, entry) => {
 // Deliberately an ALLOW-LIST rather than a general renderer-to-renderer bus: a general one is an
 // invitation to move state across windows by shouting, which is how two windows end up disagreeing.
 // These two are relayed because a control that already exists depends on them.
-const UI_BROADCAST_ALLOWED = new Set(["ether:guest-toggle", "ether:guest-volume"]);
+const UI_BROADCAST_ALLOWED = new Set(["ether:guest-toggle", "ether:guest-volume", "ether:guest-level"]);   // guest-level: Show+ → the board's GUEST meter
 
 ipcMain.on("ui:broadcast", (_evt, msg) => {
   if (!msg || !UI_BROADCAST_ALLOWED.has(msg.name)) return;

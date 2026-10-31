@@ -17,6 +17,8 @@ import StreamStatusPill from "./StreamStatusPill";
 import { QRCodeSVG } from "qrcode.react";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 import { bindLocalMedia, localAudio } from "../audio/localOutput";
+import { dispatchCrossWindow } from "../lib/crossWindowEvent";
+import { guestSlot, guestLevelFrom, GUEST_LEVEL_EVERY_MS } from "../lib/guestLevel";
 
 const invoke = (cmd: string, args?: any): Promise<any> =>
   (window as any).ether.invoke(cmd, args);
@@ -694,6 +696,35 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
       window.removeEventListener("ether:guest-volume", onVolume as EventListener);
     };
   }, []);
+
+  // THE GUEST STRIP'S METER (src/lib/guestLevel.ts): each connected guest's level, sent to the board in every window.
+  // It was listened for and never sent, so the meter on the board's GUEST strip could never move.
+  useEffect(() => {
+    const live = guests.map((g, i) => ({ g, i })).filter(({ g }) => g.stream && g.stream.getAudioTracks().length > 0);
+    if (live.length === 0) return;
+    let ctx: AudioContext | null = null;
+    const meters: { slot: string; muted: boolean; analyser: AnalyserNode; buf: Uint8Array }[] = [];
+    try {
+      ctx = new AudioContext();
+      for (const { g, i } of live) {
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        ctx.createMediaStreamSource(g.stream as MediaStream).connect(analyser);   // analyser only — never to the speakers
+        meters.push({ slot: guestSlot(i), muted: g.muted, analyser, buf: new Uint8Array(analyser.frequencyBinCount) });
+      }
+    } catch { /* no audio context — the meter stays at rest */ }
+    const timer = setInterval(() => {
+      for (const m of meters) {
+        m.analyser.getByteFrequencyData(m.buf as any);
+        dispatchCrossWindow("ether:guest-level", { slot: m.slot, level: guestLevelFrom(m.buf, m.muted) });
+      }
+    }, GUEST_LEVEL_EVERY_MS);
+    return () => {
+      clearInterval(timer);
+      for (const m of meters) dispatchCrossWindow("ether:guest-level", { slot: m.slot, level: 0 });   // gone or changed: at rest
+      ctx?.close().catch(() => {});
+    };
+  }, [guests]);
 
   return { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken, roomCode, turnState };
 }

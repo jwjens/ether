@@ -25,7 +25,9 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
   { kind: "jukebox",      label: "Jukebox",              short: "Jukebox", family: "file",
     state: "Public request wall — patched and playing" },
   { kind: "announcement", label: "Announcement",         short: "Announce", family: "file",
-    state: "Patched. Announcement playout arrives in a later slice — nothing fires yet." },
+    // Was "nothing fires yet" — stale since announcements reached air (66a39f3) and their schedule (4e7425e): main's
+    // fireAnnouncement plays on EVERY enabled source channel dialled to Announcement (electron/main.js).
+    state: "Announcements air on this channel — fired from ☰ Menu → Announcements, or on their schedule." },
   { kind: "jingle",       label: "Sweeper",              short: "Sweeper", family: "file",
     // The `kind` VALUE stays "jingle": it is a persisted deck-config key, not a label. Changing a
     // stored key for cosmetics is how a config silently stops matching, and the daemon's channel

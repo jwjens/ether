@@ -206,6 +206,15 @@ audio interface's direct-monitor.** See **Mic on Air**.
    moving, the source is alive — so a silent channel with a moving meter is cut (ON unlit) or faded down.
    If it is not moving, the source itself is silent. See **Reading the Meters**.
 
+## Source channels: Announcement and Guest
+
+- **Announcement** — a source channel set to **Announcement** plays your announcements: the ones you fire from
+  **☰ Menu → Announcements** and the ones on their schedule. Set two channels to Announcement and both play them.
+- **Guest** — a guest channel's meter shows that guest's voice while the guest is connected in **Show+**. A muted
+  guest reads at rest. The guest's audio (and its ON) lives in the Show+ window, so keep Show+ open while a guest is on.
+- **Network** (IP / Zephyr / AoIP) is listed but can't be chosen yet: it needs a capture path in the audio engine.
+  For another Ether computer, use **Link**.
+
 ## Not in this version (by design)
 
 - **The cut is not a fade.** OFF is immediate and ON is immediate — use the fader if you want to ride it.

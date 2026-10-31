@@ -8,8 +8,8 @@
 // what "stop building a dedicated deck per feature" actually means.
 //
 // HONEST STATE (the reason this file has a state line at all): the file kinds are selectable now,
-// but only the jukebox actually makes sound today. Announcement playout is a later slice and the
-// stream kinds need an engine capture path that does not exist (Phase 2). Rather than hide that or
+// and play (jukebox, announcements, sweepers, carts; mic and link are engine inputs). Only Network still needs an
+// engine capture path that does not exist (Phase 2). Rather than hide that or
 // let the operator infer it from silence, the strip SAYS which it is, underneath the dropdown.
 // A control that looks live and is not is the defect this project keeps paying for.
 
