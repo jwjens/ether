@@ -244,9 +244,8 @@ export default function AboutPanel({ onClose }: Props) {
 
               {/* Legal footer */}
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.18)", lineHeight: 1.6, borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 16 }}>
-                Ether is free and open-source software. The core platform will always be free.
-                Studio and Network plans fund continued development. © 2025–2026 Ether Technologies.
-                Released under the MIT License.
+                © 2025–2026 Ether Technologies. The Open Source tab lists the open-source parts Ether is built with and their
+                licenses.
               </div>
             </div>
           )}
@@ -311,7 +310,7 @@ export default function AboutPanel({ onClose }: Props) {
         }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 9, color: "rgba(255,255,255,0.15)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.06em" }}>
-              ETHER TECHNOLOGIES · v{version} · MIT LICENSE
+              ETHER TECHNOLOGIES · v{version}
             </span>
             <span style={{ fontSize: 9, color: "rgba(255,255,255,0.08)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.1em" }}>
               BUILT BY DENIRO

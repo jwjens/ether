@@ -17,6 +17,7 @@ describe("About is truthful", () => {
   it("no 'free, open-source'; What's New reads this version's real release notes", () => {
     const a = read("components/AboutPanel.tsx");
     expect(a).not.toMatch(/free, open-source/);
+    expect(a).not.toMatch(/free and open-source software|MIT LICENSE|Released under the MIT License|Studio and Network plans/);
     expect(a).not.toMatch(/const CHANGELOG/);
     expect(a).toMatch(/invoke\("updater:release-notes-of", version\)/);
   });
