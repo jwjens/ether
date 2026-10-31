@@ -3444,7 +3444,13 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           <button onClick={handleProcessAll} disabled={processing} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: processing ? "var(--bg-tertiary)" : "var(--accent-blue)", color: processing ? "var(--text-tertiary)" : "#fff", border: "none", cursor: processing ? "default" : "pointer" }}>
             {processing ? "Analyzing..." : "Analyze all songs"}
           </button>
-          <button onClick={async () => { await (window as any).ether.songs.resetLoudnessByStation(stationId); getProcessingStats().then(setProcessingStats); }}
+          <button onClick={async () => {
+            // This station's songs only, after Ether's own confirm window (Jeff, 2026-10-31).
+            if (!(await etherConfirm("Clear the loudness and BPM measurements of this station's songs? They are measured again by Analyze all songs.", { danger: true }))) return;
+            const r = await (window as any).ether.songs.resetLoudnessByStation(stationId);
+            setProcessingProgress(r?.ok ? `Cleared the measurements of ${r.cleared ?? 0} song${r.cleared === 1 ? "" : "s"} in this station.` : `Not cleared: ${r?.error || "unknown error"}`);
+            getProcessingStats().then(setProcessingStats);
+          }}
             style={{ padding: "8px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
             Reset
           </button>

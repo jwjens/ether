@@ -389,10 +389,14 @@ function songsDeleteByStation(db, _stationId) {
   return { ok: true, cleared: rows.length };
 }
 
-function songsResetLoudnessByStation(db, _stationId) {
+// THIS STATION'S SONGS ONLY (Jeff, 2026-10-31): songs belong to the account, so "the station's songs" are the songs in
+// that station's categories. It used to clear every song on the computer, whatever the station. No station = nothing.
+function songsResetLoudnessByStation(db, stationId) {
+  if (stationId == null) return { ok: false, error: 'no station' };
   const rows = db.prepare(
-    `SELECT * FROM ${TABLE} WHERE deleted_at IS NULL`
-  ).all();
+    `SELECT s.* FROM ${TABLE} s JOIN categories c ON c.id = s.category_id
+      WHERE s.deleted_at IS NULL AND c.deleted_at IS NULL AND c.station_id = ?`
+  ).all(stationId);
   const now = new Date().toISOString();
   const doAll = db.transaction(() => {
     for (const row of rows) {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { etherConfirm } from "../lib/etherConfirm";
 import { processLibrary, getProcessingStats } from "../audio/songAnalysis";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -44,6 +45,8 @@ export default function ProcessingPanel() {
   };
 
   const handleResetAll = async () => {
+    // This station's songs only, after Ether's own confirm window (Jeff, 2026-10-31).
+    if (!(await etherConfirm("Clear the loudness measurements of this station's songs?", { danger: true }))) return;
     await (window as any).ether.songs.resetLoudnessByStation(stationId);
     load();
   };
