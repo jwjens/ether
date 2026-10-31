@@ -45,6 +45,9 @@ on is always your choice, per station.
    standard; louder (e.g. −12) is more aggressive, quieter (e.g. −16) is gentler. The limiter holds its
    ceiling regardless (see **The ceiling** below). If the stream is split from the monitor in the
    Processor rack, the stream's target is set there instead.
+   **This is the same number as the Processor rack's RIDE target** — change it here or in the rack and the other
+   shows the change. It takes effect straight away. If the engine doesn't accept it, the line beside the box says why
+   and the box goes back to what is running.
 
 Each setting is **per station** and takes effect within a few seconds — no restart. Switch stations and set
 each one independently.

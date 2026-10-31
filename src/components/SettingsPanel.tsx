@@ -5,6 +5,7 @@ import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJuk
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import CloudAudioCleanup from "./CloudAudioCleanup";
 import BackupsPanel from "./BackupsPanel";
+import { localTargetOf, withLocalTarget } from "../lib/procTarget";
 import SendRestoreCard from "./SendRestoreCard";
 import { query } from "../db/client";
 import { idsFromStoredList, storedFromIds } from "../lib/refValue";
@@ -801,6 +802,21 @@ function AudioProcessingSection() {
   // stored setting — if nothing is stored, the field says so instead of quietly showing -14.
   const [target, setTarget] = useState<number | null>(null);
   const [targetStored, setTargetStored] = useState(false);
+  const rackRef = useRef<any>(null);
+  const [targetMsg, setTargetMsg] = useState<string | null>(null);
+  // Write the target INTO THE RACK (rack:set: the engine accepts it first, then it is stored with the legacy write-through).
+  const saveTarget = async (c: number) => {
+    setTarget(c); setTargetMsg(null);
+    const api = (window as any).ether;
+    try {
+      const cur = rackRef.current || (await api.audio?.getRack?.(stationId))?.doc;
+      const next = cur ? withLocalTarget(cur, c) : null;
+      if (!next) { setTargetMsg("The processor rack has no loudness ride on the monitor branch — add one in the Processor rack."); return; }
+      const r = await api.audio?.setRack?.(stationId, next);
+      if (r && r.ok === true) { rackRef.current = next; setTargetStored(true); }
+      else { setTargetMsg(`Not applied: ${(r && r.reason) || "the engine did not accept it"}`); const back = localTargetOf(cur); if (back != null) setTarget(back); }
+    } catch (e: any) { setTargetMsg(`Not applied: ${e?.message || e}`); }
+  };
   useEffect(() => {
     if (!stationId) return;
     (async () => {
@@ -810,9 +826,14 @@ function AudioProcessingSection() {
         const get = (k: string) => rows.find(x => x.key === k)?.value;
         setLocal(get("proc_local") === "1");
         setStream(get("proc_stream") === "1");
-        const t = parseFloat(get("proc_target_lufs"));
-        if (!isNaN(t)) { setTarget(t); setTargetStored(true); }
-        else { setTarget(PROC_TARGET_EFFECTIVE); setTargetStored(false); }
+        // THE TARGET IS THE RACK'S (src/lib/procTarget.ts): the monitor branch's RIDE target in the station's rack —
+        // stored, or seeded from the legacy key — which is what the engine runs. The legacy key alone was ignored once a
+        // rack had been saved.
+        const rk = await (window as any).ether.audio?.getRack?.(stationId);
+        const rt = rk && rk.ok ? localTargetOf(rk.doc) : null;
+        if (rk && rk.ok) { rackRef.current = rk.doc; setTargetStored(rk.source === "rack_master" || get("proc_target_lufs") != null); }
+        if (rt != null) setTarget(rt);
+        else { const t = parseFloat(get("proc_target_lufs")); if (!isNaN(t)) { setTarget(t); setTargetStored(true); } else { setTarget(PROC_TARGET_EFFECTIVE); setTargetStored(false); } }
       } catch { /* defaults */ }
     })();
   }, [stationId]);
@@ -861,10 +882,10 @@ function AudioProcessingSection() {
           )}
         </span>
       </SettingRow>
-      <SettingRow label="Target loudness" hint="EBU R128 program target for the STUDIO MONITOR branch. −14 LUFS is the streaming standard. When the monitor and stream are split, the stream has its own target, set in the Processor rack.">
+      <SettingRow label="Target loudness" hint="EBU R128 program target for the STUDIO MONITOR branch — the same number as the Processor rack's RIDE target (changing one changes the other). −14 LUFS is the streaming standard. While the monitor and stream are linked the stream follows it; when split, the stream has its own target, set in the Processor rack.">
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input type="number" min={-30} max={-6} step={1} value={target ?? PROC_TARGET_EFFECTIVE}
-            onChange={e => { const t = parseFloat(e.target.value); if (!isNaN(t)) { const c = Math.max(-30, Math.min(-6, t)); setTarget(c); setTargetStored(true); save("proc_target_lufs", String(c)); } }}
+            onChange={e => { const t = parseFloat(e.target.value); if (!isNaN(t)) { const c = Math.max(-30, Math.min(-6, t)); void saveTarget(c); } }}
             style={{ width: 70, padding: "6px 8px", fontSize: 13, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>LUFS</span>
           {target !== null && !targetStored && (
@@ -872,6 +893,7 @@ function AudioProcessingSection() {
               station default, not yet saved
             </span>
           )}
+          {targetMsg && <span style={{ fontSize: 11, color: "var(--accent-red, #ef4444)" }}>{targetMsg}</span>}
         </div>
       </SettingRow>
       {on ? (
