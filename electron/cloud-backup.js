@@ -207,7 +207,7 @@ function installCloudBackup(ipcMain, database, opts = {}) {
     if (!licenseKey) return { ok: false, error: "No license_key in station_config_kv — validate your license in Subscription first." };
     const planTier = getConfigValue("plan_tier") || "free";
     if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.pro) {
-      return { ok: false, error: `Cloud backup requires Studio (pro) tier or higher — current: ${planTier}` };
+      return { ok: false, error: `Cloud backup needs a Station, Pro or Unlimited plan — this computer's plan: ${planTier}` };
     }
     try {
       const timestamp = isoTimestampForBackup(new Date());
@@ -228,8 +228,10 @@ function installCloudBackup(ipcMain, database, opts = {}) {
     return config;
   });
 
-  ipcMain.handle("cloud-backup:run-now", async () => {
-    return await runBackup(dbPath);
+  // { description } — Tools → Cloud Log Backup's "Description (optional)". It goes into the backup's .meta.json in the
+  // cloud and is remembered on this computer next to the backup (electron/backup-notes.js). Older callers send nothing.
+  ipcMain.handle("cloud-backup:run-now", async (_evt, opts) => {
+    return await runBackup(dbPath, { description: opts && opts.description });
   });
 
   ipcMain.handle("cloud-backup:get-history", () => {
@@ -270,7 +272,7 @@ async function runBackup(dbPath, opts = {}) {
     // 1. Tier gate — backup is a pro+ (Studio+) feature
     const planTier = getConfigValue("plan_tier") || "free";
     if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.pro) {
-      const msg = `backup requires Studio (pro) tier or higher — current: ${planTier}`;
+      const msg = `cloud backup needs a Station, Pro or Unlimited plan — this computer's plan: ${planTier}`;
       config.lastStatus = "skipped: " + msg;
       saveConfig();
       console.log(`[CLOUD-BACKUP] ${msg}`);
@@ -319,7 +321,9 @@ async function runBackup(dbPath, opts = {}) {
 
     // 5. Build metadata sidecar
     const timestamp = isoTimestampForBackup(new Date());
+    const description = require("./backup-notes").cleanDescription(opts.description);
     const metadata  = {
+      description,                            // what the operator typed in "Description (optional)", or null
       stationName:      getConfigValue("station_name") || "Ether Station",
       backedUpAt:       new Date().toISOString(),
       timestamp,                              // matches the R2 key
@@ -383,9 +387,10 @@ async function runBackup(dbPath, opts = {}) {
         .run("r2 (backend-signed)", gzippedDb.length, checksum, "success", durationMs);
     } catch {}
     console.log(`[CLOUD-BACKUP] Success: ${(gzippedDb.length / 1024).toFixed(1)}KB + meta in ${durationMs}ms (ts=${timestamp}, ${checksum})`);
+    if (description) { try { require("./backup-notes").addNote(getDb(), timestamp, description); } catch (e) { console.warn("[CLOUD-BACKUP] description not kept on this computer:", e.message); } }
     let pruned = null;
     if (opts.keep > 0) pruned = await pruneCloud(licenseKey, opts.keep).catch(e => ({ error: e.message }));
-    return { ok: true, size: gzippedDb.length, checksum, durationMs, pruned };
+    return { ok: true, size: gzippedDb.length, checksum, durationMs, pruned, timestamp, description };
   } catch (e) {
     config.lastStatus = "error: " + e.message;
     saveConfig();
@@ -430,7 +435,7 @@ async function pruneCloud(licenseKey, keep) {
 }
 /** The scheduled cloud backup (electron/backups.js). Skipped — and said — when this computer cannot back up to the cloud. */
 async function runScheduledCloud({ keep } = {}) {
-  if (!r2Ready()) return { ok: false, skipped: "cloud backups need sync on for this computer, a Studio plan or higher, and a license" };
+  if (!r2Ready()) return { ok: false, skipped: "cloud backups need sync on for this computer, a Station, Pro or Unlimited plan, and a license" };
   return runBackup(_dbPath, { keep });
 }
 

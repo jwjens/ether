@@ -115,7 +115,7 @@ never changes another computer.
   many are kept (the oldest beyond that number are removed). The line under it shows the last and next backup and
   about how much disk space the kept backups take.
 - **In the cloud** — how often this computer sends a backup to the cloud, and how many of **this computer's** cloud
-  backups are kept (**0 keeps all**). Cloud backups need **Keep my stuff synced** on and a Studio plan or higher.
+  backups are kept (**0 keeps all**). Cloud backups need **Keep my stuff synced** on and a Station, Pro or Unlimited plan.
 - **Back up now** — makes one right away, local or cloud.
 
 Starting values are what Ether did before: local backups **Off**, cloud **every 6 hours** (or your old setting),

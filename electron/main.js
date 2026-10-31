@@ -8341,7 +8341,10 @@ ipcMain.handle("backups:list", async () => {
     // Name each computer from what this computer knows: itself, or the name its plays carry (play_log.machine_name).
     const names = new Map();
     try { for (const r of getDb().prepare("SELECT machine_id, MAX(machine_name) n FROM play_log WHERE machine_id IS NOT NULL GROUP BY machine_id").all()) if (r.n) names.set(String(r.machine_id).toLowerCase(), r.n); } catch {}
-    out.cloud = (data.backups || []).map(b => ({ ...b, where: "cloud",
+    // Each backup's description (Cloud Log Backup's "Description (optional)"), as this computer remembers it.
+    let withNotes = data.backups || [];
+    try { withNotes = require("./backup-notes").attachNotes(getDb(), withNotes); } catch {}
+    out.cloud = withNotes.map(b => ({ ...b, where: "cloud",
       computer: !b.machine_id ? "account (before per-computer backups)" : b.machine_id === out.thisMachine ? `${require("os").hostname()} (this computer)` : (names.get(b.machine_id) || `computer ${b.machine_id.slice(0, 8)}`) }));
   } catch (e) { out.cloudError = e.message; }
   return out;

@@ -1,17 +1,18 @@
 /**
  * CloudBackup.tsx
- * Ether Technologies — Cloud Log Backup (Pro feature)
+ * Ether Technologies — Cloud Log Backup (a cloud feature: Station, Pro or Unlimited plan)
  *
- * Backs up play_log and songs metadata to Railway backend.
- * Data is gzipped JSON before upload. Restore downloads and reimports.
- *
- * Gating: Pro = 30 backups max. Station = unlimited.
+ * "Backup Now" uploads the WHOLE station database to the cloud (cloud-backup:run-now) with the optional description.
+ * "Saved Backups" lists those cloud backups (backups:list) and "↩ Restore" restores one through the sanctioned swap
+ * (backups:restore-cloud — the same restore as Settings → Backups), never by writing tables from here.
+ * "Auto-backup daily at midnight" is this computer's cloud backup schedule (src/lib/cloudBackupSchedule.ts).
+ * Older play-history-only backups (the legacy Postgres store) are still listed; they cannot be restored into a
+ * running station — the row says so plainly.
  */
 
 import { etherConfirm } from "../lib/etherConfirm";
 import { useState, useEffect, useCallback } from "react";
-import { execute } from "../db/client";
-import { usePlan } from "../hooks/usePlan";
+import { isDaily, togglePatch, scheduleSentence } from "../lib/cloudBackupSchedule";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 
@@ -24,6 +25,22 @@ interface BackupEntry {
   checksum: string;
   created_at: string;
   description: string | null;
+}
+
+/** A full-station cloud backup, from backups:list (electron/main.js). */
+interface CloudEntry {
+  key: string;
+  timestamp: string;          // 2026-10-31T12-00-00Z
+  machine_id: string | null;
+  size: number | null;
+  computer: string;
+  description: string | null;
+}
+
+/** The R2 timestamp (2026-10-31T12-00-00Z) → a readable local date. */
+function cloudDate(ts: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/.exec(ts);
+  return m ? fmtDate(new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])).toISOString()) : ts;
 }
 
 interface BackupListResponse {
@@ -99,7 +116,6 @@ async function gunzipBytes(bytes: Uint8Array): Promise<string> {
 // ─── Main Component ───────────────────────────────────────────
 
 export default function CloudBackup() {
-  const { isPro, isStation, plan } = usePlan();
   const { stationId: activeStationId, isReady } = useActiveStation();
 
   const [licenseKey, setLicenseKey]       = useState("");
@@ -109,11 +125,16 @@ export default function CloudBackup() {
   const [backupLimit, setBackupLimit]     = useState<number | null>(null);
   const [loading, setLoading]             = useState(false);
   const [backing, setBacking]             = useState(false);
-  const [restoring, setRestoring]         = useState<number | null>(null);
+  const [restoring, setRestoring]         = useState<string | null>(null);
   const [deleting, setDeleting]           = useState<number | null>(null);
   const [status, setStatus]               = useState<{ msg: string; type: "ok" | "err" | "info" } | null>(null);
   const [description, setDescription]    = useState("");
-  const [autoBackup, setAutoBackup]       = useState(false);
+  // This computer's cloud backup schedule (electron/backups.js) — what the auto-backup toggle reads and writes.
+  const [cloudEveryMin, setCloudEveryMin] = useState<number | null>(null);
+  const [cloudNextAt, setCloudNextAt]     = useState<number | null>(null);
+  // The full-station cloud backups — what "Backup Now" makes and "↩ Restore" restores.
+  const [cloudList, setCloudList]         = useState<CloudEntry[]>([]);
+  const [cloudListError, setCloudListError] = useState<string | null>(null);
   const [lastBackupAt, setLastBackupAt]   = useState<string | null>(null);
 
   // ── R2 state ──
@@ -135,11 +156,25 @@ export default function CloudBackup() {
         const get = (k: string) => rows.find((r: { key: string }) => r.key === k)?.value;
         if (get('license_key'))    setLicenseKey(get('license_key')!);
         if (get('license_email'))  setStationId(get('license_email')!);
-        if (get('cloud_auto_backup') === "1") setAutoBackup(true);
         if (get('cloud_last_backup'))         setLastBackupAt(get('cloud_last_backup')!);
       } catch {}
     })();
   }, [activeStationId, isReady]);
+
+  const loadSchedule = useCallback(async () => {
+    try {
+      const s = await (window as any).ether.invoke("backups:get-settings");
+      if (s && s.ok) { setCloudEveryMin(s.cloudEveryMin ?? 0); setCloudNextAt(s.cloudNextAt ?? null); }
+    } catch {}
+  }, []);
+  const loadCloudList = useCallback(async () => {
+    try {
+      const r = await (window as any).ether.invoke("backups:list");
+      setCloudList((r?.cloud || []) as CloudEntry[]);
+      setCloudListError(r?.cloudError || null);
+    } catch (e: any) { setCloudListError(String(e?.message || e)); }
+  }, []);
+  useEffect(() => { loadSchedule(); loadCloudList(); }, [loadSchedule, loadCloudList]);
 
   // Load R2 config from main process
   useEffect(() => {
@@ -266,15 +301,17 @@ export default function CloudBackup() {
     // is why stations built on one box never carried over.)
     setStatus({ msg: "Backing up your full station to the cloud…", type: "info" });
     try {
-      const r = await (window as any).ether.invoke("cloud-backup:run-now");
+      const note = description.trim();
+      const r = await (window as any).ether.invoke("cloud-backup:run-now", { description: note || undefined });
       if (!r?.ok) {
-        throw new Error(r?.tier_insufficient ? "Cloud backup requires the Network plan." : (r?.error || "Backup failed"));
+        throw new Error(r?.tier_insufficient ? "Cloud backup needs a Station, Pro or Unlimited plan." : (r?.error || "Backup failed"));
       }
       const now = new Date().toISOString();
       await (window as any).ether.stationConfigKv.upsertByKey(activeStationId, 'cloud_last_backup', now);
       setLastBackupAt(now);
       setDescription("");
-      setStatus({ msg: `✓ Full station backed up to the cloud${r.size ? ` (${fmtBytes(r.size)})` : ""}`, type: "ok" });
+      setStatus({ msg: `✓ Full station backed up to the cloud${r.size ? ` (${fmtBytes(r.size)})` : ""}${r.description ? ` — "${r.description}"` : ""}`, type: "ok" });
+      loadCloudList();
     } catch (e: any) {
       setStatus({ msg: "Backup failed: " + e.message, type: "err" });
     }
@@ -283,54 +320,32 @@ export default function CloudBackup() {
 
   // ── Restore backup ─────────────────────────────────────────
 
-  const restoreBackup = async (backup: BackupEntry) => {
-    if (!(await etherConfirm(`Restore backup from ${fmtDate(backup.created_at)}?\n\nThis will REPLACE your current play_log with the backup data. Songs library will not be affected.`, { danger: true }))) return;
-
-    setRestoring(backup.id);
-    setStatus({ msg: "Downloading backup...", type: "info" });
-
+  // A full-station cloud backup → the sanctioned restore (backups:restore-cloud: download, verify, swap the database file,
+  // keep this computer's identity and sign-in). The same restore as Settings → Backups.
+  const restoreCloud = async (b: CloudEntry) => {
+    if (!(await etherConfirm(`Restore the cloud backup from ${cloudDate(b.timestamp)} (${b.computer})?\n\nThis replaces this computer's whole station database with that backup. ` +
+                 `Switch sync off first (Settings) so nothing spreads; changes not yet sent are discarded.`, { danger: true }))) return;
+    setRestoring(b.key);
+    setStatus({ msg: "Downloading and restoring…", type: "info" });
     try {
-      const res = await fetch(`${ETHER_BACKEND_URL}/backup/download/${backup.id}`, {
-        headers: { "x-license-key": licenseKey },
-      });
-      if (!res.ok) throw new Error("Download failed");
-
-      const arrayBuf = await res.arrayBuffer();
-      const bytes    = new Uint8Array(arrayBuf);
-
-      setStatus({ msg: "Decompressing...", type: "info" });
-      const json    = await gunzipBytes(bytes);
-      const payload = JSON.parse(json);
-
-      setStatus({ msg: "Restoring data...", type: "info" });
-
-      // Restore play_log
-      // DEFERRED (phase-3.5 cluster B step 3): these two execute() calls are intentional
-      // raw writes that bypass the typed handler. Cloud restore is a privileged DB
-      // operation — NOT a normal app write. Wrapping in window.ether.playLog.* requires
-      // either a 'restore-batch' protocol op (out of scope) or a dedicated restore IPC
-      // that bypasses sync entirely (correct architecture, separate arc).
-      // The db:execute lock WILL fire here on a real restore. See:
-      //   docs/phase-3.5-cloudbackup-restore-deferred.md
-      if (payload.tables?.play_log?.length > 0) {
-        await execute("DELETE FROM play_log", []);
-        for (const row of payload.tables.play_log) {
-          await execute(
-            "INSERT OR IGNORE INTO play_log (id,title,artist,deck_id,played_at) VALUES (?,?,?,?,?)",
-            [row.id, row.title, row.artist, row.deck_id, row.played_at]
-          );
-        }
-      }
-
-      // The old log table is not restored (Program Log slice 6, 2026-09-20): it was dropped in v61.
-      // generated_schedule is regenerated per machine by design and is not part of a restore. A
-      // legacy backup payload that still carries that table is simply ignored here.
-
-      setStatus({ msg: `✓ Restored ${payload.tables?.play_log?.length ?? 0} play log entries.`, type: "ok" });
+      const r = await (window as any).ether.invoke("backups:restore-cloud", b.key);
+      if (r && r.ok) setStatus({ msg: `✓ Restored (${r.songs} songs).${r.sync ? ` ${r.sync.discarded} unsent change(s) discarded.` : ""} Restart Ether for everything to take effect.`, type: "ok" });
+      else setStatus({ msg: "Restore failed: " + ((r && r.error) || "not restored"), type: "err" });
     } catch (e: any) {
-      setStatus({ msg: "Restore failed: " + e.message, type: "err" });
+      setStatus({ msg: "Restore failed: " + (e?.message || e), type: "err" });
     }
     setRestoring(null);
+  };
+
+  // An OLDER play-history-only backup (the legacy store). Loading it would mean deleting and rewriting play_log from
+  // this screen — play history every computer shares through sync — which Ether refuses (the synced-table guard), and
+  // rightly. So this says so instead of failing silently. Its rows can still be deleted.
+  const restoreBackup = async (backup: BackupEntry) => {
+    setStatus({
+      msg: `The backup from ${fmtDate(backup.created_at)} is an older play-history-only backup. Ether can't load it into a running station: ` +
+           `it would overwrite the play history every computer shares. Restore one of the full-station backups above instead.`,
+      type: "err",
+    });
   };
 
   // ── Delete backup ──────────────────────────────────────────
@@ -353,10 +368,12 @@ export default function CloudBackup() {
   };
 
   const toggleAutoBackup = async () => {
-    const next = !autoBackup;
-    setAutoBackup(next);
-    await (window as any).ether.stationConfigKv.upsertByKey(activeStationId, 'cloud_auto_backup', next ? "1" : "0");
+    if (cloudEveryMin == null) return;
+    const r = await (window as any).ether.invoke("backups:set-settings", togglePatch(cloudEveryMin, Date.now()));
+    if (r && r.ok) { setCloudEveryMin(r.cloudEveryMin ?? 0); setCloudNextAt(r.cloudNextAt ?? null); }
+    else setStatus({ msg: "Schedule not saved: " + ((r && r.error) || "unknown error"), type: "err" });
   };
+  const autoBackup = isDaily(cloudEveryMin);
 
   const statusColor = status?.type === "ok" ? "#34d399" : status?.type === "err" ? "#ef4444" : "var(--accent-cyan)";
 
@@ -367,7 +384,7 @@ export default function CloudBackup() {
 
       {/* Header */}
       <div style={{ padding: "14px 24px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0 }}>
-        <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 2 }}>Pro Feature</div>
+        <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 2 }}>Station · Pro · Unlimited</div>
         <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Cloud Log Backup</div>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
           Back up your play history and program logs securely to Ether cloud
@@ -518,13 +535,13 @@ export default function CloudBackup() {
             />
             <button
               onClick={createBackup}
-              disabled={backing || !licenseKey || !stationId}
+              disabled={backing || !licenseKey}
               style={{
                 padding: "8px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700,
                 background: backing ? "var(--bg-tertiary)" : "var(--accent-green)",
                 color: backing ? "var(--text-tertiary)" : "#000",
-                border: "none", cursor: (!licenseKey || !stationId || backing) ? "default" : "pointer",
-                opacity: (!licenseKey || !stationId) ? 0.5 : 1,
+                border: "none", cursor: (!licenseKey || backing) ? "default" : "pointer",
+                opacity: !licenseKey ? 0.5 : 1,
                 transition: "all 0.15s", flexShrink: 0,
               }}
             >
@@ -535,6 +552,8 @@ export default function CloudBackup() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
               onClick={toggleAutoBackup}
+              disabled={cloudEveryMin == null}
+              title={autoBackup ? "On — click to turn cloud backups off on this computer" : "Click to back up to the cloud every day at midnight"}
               style={{ width: 36, height: 20, borderRadius: 0, border: "none", cursor: "pointer", position: "relative", background: autoBackup ? "var(--accent-green)" : "var(--bg-tertiary)", transition: "background 0.2s", flexShrink: 0 }}
             >
               <div style={{ position: "absolute", top: 2, left: autoBackup ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
@@ -543,17 +562,55 @@ export default function CloudBackup() {
             {lastBackupAt && <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginLeft: "auto" }}>Last backup: {timeAgo(lastBackupAt)}</span>}
           </div>
 
+          <div style={{ marginTop: 6, fontSize: 10, color: "var(--text-tertiary)" }}>{scheduleSentence(cloudEveryMin, cloudNextAt)}</div>
+
           <div style={{ marginTop: 10, fontSize: 10, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
-            Backs up: play history, program logs, scheduling data.
-            {plan === "pro" ? ` Studio plan: last ${backupLimit ?? 30} backups stored.` : " Network plan: unlimited backups."}
+            Backs up the whole station database: library, categories, clocks, shows, schedule, play history and settings.
+            How many are kept is set in Settings → Backups.
           </div>
+        </div>
+
+        {/* Full-station cloud backups — what Backup Now makes; Restore uses the sanctioned swap */}
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>
+              Saved Backups {cloudList.length > 0 && `(${cloudList.length})`}
+            </div>
+            <button onClick={loadCloudList} style={{ background: "none", border: "none", color: "var(--accent-cyan)", cursor: "pointer", fontSize: 10, fontWeight: 700 }}>↻ Refresh</button>
+          </div>
+          {cloudListError && <div style={{ padding: "8px 16px", fontSize: 11, color: "var(--text-tertiary)" }}>Cloud backups: {cloudListError}.</div>}
+          {cloudList.length === 0 ? (
+            <div style={{ padding: "24px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 11 }}>
+              No full-station cloud backups yet. Click "Backup Now" to make the first one.
+            </div>
+          ) : cloudList.map((b, i) => (
+            <div key={b.key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: i < cloudList.length - 1 ? "1px solid var(--border-primary)" : "none" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {b.description || cloudDate(b.timestamp)}
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 2 }}>
+                  {b.description && <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{cloudDate(b.timestamp)}</span>}
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{b.computer}</span>
+                  {b.size != null && <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{fmtBytes(b.size)}</span>}
+                </div>
+              </div>
+              <button
+                onClick={() => restoreCloud(b)}
+                disabled={restoring != null}
+                style={{ padding: "5px 12px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)", cursor: "pointer", flexShrink: 0 }}
+              >
+                {restoring === b.key ? "Restoring..." : "↩ Restore"}
+              </button>
+            </div>
+          ))}
         </div>
 
         {/* Backup list */}
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>
-              Saved Backups {backups.length > 0 && `(${backups.length})`}
+              Older play-history backups {backups.length > 0 && `(${backups.length})`}
             </div>
             {totalSize > 0 && (
               <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>
@@ -567,8 +624,8 @@ export default function CloudBackup() {
           ) : backups.length === 0 ? (
             <div style={{ padding: "40px 24px", textAlign: "center" }}>
               <div style={{ fontSize: 32, marginBottom: 10 }}>☁</div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>No backups yet</div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Click "Backup Now" to create your first cloud backup</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>No older play-history backups</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>These came from earlier versions of Ether (Connect above to list them). New backups are full-station backups, listed under Saved Backups.</div>
             </div>
           ) : (
             backups.map((b, i) => (
@@ -595,10 +652,10 @@ export default function CloudBackup() {
                 {/* Actions */}
                 <button
                   onClick={() => restoreBackup(b)}
-                  disabled={restoring === b.id}
+                  title="An older play-history-only backup — Ether can't load it into a running station; click to see why"
                   style={{ padding: "5px 12px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)", cursor: "pointer", flexShrink: 0 }}
                 >
-                  {restoring === b.id ? "Restoring..." : "↩ Restore"}
+                  ↩ Restore
                 </button>
                 <button
                   onClick={() => deleteBackup(b)}

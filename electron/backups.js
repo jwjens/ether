@@ -19,6 +19,15 @@ const { dbHolders } = require("./db-holders");
 const MIN_EVERY = 5;
 const LOCAL_RE = /^openair-backup-(\d+)\.db$/;
 
+/** The next due time after `due` has come: due + whole intervals, the first one after `now`. Counting from the due time
+ *  (not from when the minute tick noticed it) keeps a schedule on its clock — "daily at midnight" stays at midnight
+ *  instead of creeping a minute later every day. A computer that was off still backs up once, now, then resumes. */
+function nextDue(due, everyMin, now) {
+  const step = everyMin * 60000;
+  if (!(step > 0) || !(due > 0)) return now + step;
+  return due + (Math.floor((now - due) / step) + 1) * step;
+}
+
 function create({ getDb, dbPath, backupsDir, cloudRun, healthEvent, log = console.log }) {
   const kvGet = (k) => { try { return getDb().prepare("SELECT value FROM system_state WHERE key = ?").get(k)?.value ?? null; } catch { return null; } };
   const kvSet = (k, v) => getDb().prepare("INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, ?)").run(k, String(v), new Date().toISOString());
@@ -46,7 +55,14 @@ function create({ getDb, dbPath, backupsDir, cloudRun, healthEvent, log = consol
     const now = Date.now();
     if (p.localEveryMin !== undefined) { const n = every(p.localEveryMin, "Local backups"); kvSet("backup_local_every_min", n); kvSet("backup_local_next_at", n ? now + n * 60000 : 0); }
     if (p.localKeep !== undefined) kvSet("backup_local_keep", keep(p.localKeep, "Local backups kept", false));
-    if (p.cloudEveryMin !== undefined) { const n = every(p.cloudEveryMin, "Cloud backups"); kvSet("backup_cloud_every_min", n); kvSet("backup_cloud_next_at", n ? now + n * 60000 : 0); }
+    if (p.cloudEveryMin !== undefined) {
+      const n = every(p.cloudEveryMin, "Cloud backups");
+      // cloudFirstAt (ms): when the first backup of the new schedule runs — Cloud Log Backup's "Auto-backup daily at
+      // midnight" passes the next local midnight. It must be in the future and within one interval; else one interval.
+      const first = Number(p.cloudFirstAt);
+      const at = n && Number.isFinite(first) && first > now && first <= now + n * 60000 ? first : now + n * 60000;
+      kvSet("backup_cloud_every_min", n); kvSet("backup_cloud_next_at", n ? at : 0);
+    }
     if (p.cloudKeep !== undefined) kvSet("backup_cloud_keep", keep(p.cloudKeep, "Cloud backups kept", true));
     healthEvent("backup-settings-changed", { ...p, message: "Backup settings changed on this computer" });
     if (p.localKeep !== undefined) pruneLocal();
@@ -118,11 +134,11 @@ function create({ getDb, dbPath, backupsDir, cloudRun, healthEvent, log = consol
     if (s.localEveryMin >= MIN_EVERY && !s.localNextAt) { kvSet("backup_local_next_at", now + s.localEveryMin * 60000); return; }
     if (s.cloudEveryMin >= MIN_EVERY && !s.cloudNextAt) { kvSet("backup_cloud_next_at", now + s.cloudEveryMin * 60000); return; }
     if (s.localEveryMin >= MIN_EVERY && now >= s.localNextAt) {
-      kvSet("backup_local_next_at", now + s.localEveryMin * 60000);
+      kvSet("backup_local_next_at", nextDue(s.localNextAt, s.localEveryMin, now));
       await runLocal("scheduled");
     }
     if (s.cloudEveryMin >= MIN_EVERY && now >= s.cloudNextAt) {
-      kvSet("backup_cloud_next_at", now + s.cloudEveryMin * 60000);
+      kvSet("backup_cloud_next_at", nextDue(s.cloudNextAt, s.cloudEveryMin, now));
       await runCloud("scheduled");
     }
   }
@@ -130,4 +146,4 @@ function create({ getDb, dbPath, backupsDir, cloudRun, healthEvent, log = consol
   return { settings, setSettings, listLocal, pruneLocal, runLocal, runCloud, tick, inWorker };
 }
 
-module.exports = { create, MIN_EVERY, LOCAL_RE };
+module.exports = { create, nextDue, MIN_EVERY, LOCAL_RE };

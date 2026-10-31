@@ -98,7 +98,7 @@ export default function BackupsPanel({ onRestoreLocal }: { onRestoreLocal: (name
         {all.map(b => (
           <div key={(b.key || b.name) as string} style={{ display: "grid", gridTemplateColumns: "190px 1fr 120px 80px auto", alignItems: "center", gap: 10, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "8px 12px", fontSize: 12.5 }}>
             <span style={{ color: "var(--text-primary)", fontFamily: "'DM Mono', monospace" }}>{b.label}</span>
-            <span style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.computer}</span>
+            <span title={b.description || undefined} style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.computer}{b.description ? ` — ${b.description}` : ""}</span>
             <span style={sub}>{b.kind}</span>
             <span style={sub}>{mb(b.bytes)}</span>
             <button style={btn} disabled={!!busy} onClick={async () => { if (b.where === "cloud") return restoreCloud(b); const m = await onRestoreLocal(b.name); if (m) setMsg(m); load(); }}>Restore</button>
