@@ -7805,6 +7805,7 @@ ipcMain.handle("dialog:openFile", async (_, options) => {
     properties: ["openFile", ...(options?.multiple ? ["multiSelections"] : [])],
     filters: options?.filters || [{ name: "Audio", extensions: ["mp3", "flac", "wav", "aac", "m4a", "ogg"] }],
   });
+  if (!result.canceled) for (const f of result.filePaths || []) _userChosenFiles.add(path.resolve(f));
   return result.canceled ? null : result.filePaths;
 });
 
@@ -7826,6 +7827,19 @@ ipcMain.handle("dialog:saveFile", async (_, options) => {
 // into a folder the operator picked in a Save dialog this run (the picked file, or the stems beside it), never anywhere
 // a window names on its own. electron/user-write.js.
 const _userChosenDirs = new Set();
+// Files the operator picked in an Open window this run — the only files Show+ DAW → Load session may read (below).
+const _userChosenFiles = new Set();
+// Show+ DAW → 📂 Load session: the picked session file as text, up to 20 MB (fs:readFile stops at 256 KB, which a session
+// with many regions passes). Only a file picked in the Open window this run.
+ipcMain.handle("showplus:read-session", async (_, filePath) => {
+  try {
+    const full = path.resolve(String(filePath || ""));
+    if (!_userChosenFiles.has(full)) return { ok: false, error: "Ether only opens a session you picked in the Open window" };
+    const size = fs.statSync(full).size;
+    if (size > 20 * 1024 * 1024) return { ok: false, error: "that file is too large to be a Show+ session" };
+    return { ok: true, text: fs.readFileSync(full, "utf8") };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle("fs:writeFile", async (_, filePath, data) => {
   try { return require("./user-write").writeUserFile(filePath, data, { allowedDirs: _userChosenDirs, fs }); }
   catch (e) { return { ok: false, error: e.message }; }

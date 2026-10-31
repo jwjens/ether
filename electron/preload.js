@@ -328,6 +328,7 @@ contextBridge.exposeInMainWorld("ether", {
   // Show+ DAW → deck: the rendered WAV is written and loaded on deck A/B/C by main (electron/showplus-send.js).
   showplus: {
     sendToDeck: (deck, wav, stationId) => ipcRenderer.invoke("showplus:send-to-deck", { deck, wav, stationId }),
+    readSession: (filePath)            => ipcRenderer.invoke("showplus:read-session", filePath),
   },
   fs: {
     readFile: (fp) => ipcRenderer.invoke("fs:readFile", fp),

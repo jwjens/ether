@@ -2712,8 +2712,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
           }
           return;
         }
+        setStatus("Export cancelled — nothing was saved."); return;   // Cancel in the Save window = not saved (no browser download)
       } catch (e: any) {
-        setStatus(`✗ Save failed: ${e?.message || e}`);
+        setStatus(`✗ Save failed: ${e?.message || e}`); return;
       }
     }
     const blob = new Blob([wavBuf], { type: "audio/wav" });
@@ -2892,8 +2893,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
           setStatus(`✓ Saved session${droppedBlobRegions ? ` (${droppedBlobRegions} recording(s) skipped — bounce them first)` : ""}`);
           return;
         }
+        setStatus("Save cancelled — nothing was saved."); return;   // Cancel in the Save window = not saved (no browser download)
       } catch (e: any) {
-        setStatus(`✗ Save failed: ${e?.message || e}`);
+        setStatus(`✗ Save failed: ${e?.message || e}`); return;
       }
     }
     // Fallback: download
@@ -2909,13 +2911,15 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const loadSession = useCallback(async () => {
     const ether = (window as any).ether;
     let json: string | null = null;
-    if (ether?.dialog?.openFile && ether?.fs?.readFile) {
+    if (ether?.dialog?.openFile && ether?.showplus?.readSession) {
       try {
-        const res = await ether.dialog.openFile({ filters: [{ name: "JSON", extensions: ["json"] }] });
-        const path = typeof res === "string" ? res : res?.filePath;
+        // The Open window answers a LIST of paths (null when cancelled); this read .filePath, so Load did nothing.
+        const res = await ether.dialog.openFile({ filters: [{ name: "Show+ session", extensions: ["json"] }] });
+        const path = Array.isArray(res) ? res[0] : typeof res === "string" ? res : res?.filePath;
         if (!path) return;
-        const buf = await ether.fs.readFile(path);
-        json = new TextDecoder().decode(buf instanceof Uint8Array ? buf : new Uint8Array(buf));
+        const r = await ether.showplus.readSession(path);
+        if (!r?.ok) { setStatus(`✗ Open failed: ${r?.error || "the file could not be read"}`); return; }
+        json = r.text;
       } catch (e: any) { setStatus(`✗ Open failed: ${e?.message || e}`); return; }
     } else {
       // Fallback: file picker
