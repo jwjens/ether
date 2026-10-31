@@ -36,6 +36,17 @@ the Screen Builder (the next step); this page will say how when it arrives.
 3. **Queue it.** Press **Q** to add it to the bottom of Up Next.
 4. **Add music.** With an empty library, press **Import Music**.
 
+## Songs with no audio (Spotify and NexGen / ENCO imports)
+
+**Import from Spotify** and **NexGen / ENCO** bring in the song details — title, artist, length — but not the audio.
+Those songs show a red **NO AUDIO** tag next to the title and can't air until they have their file.
+
+1. Right-click the song in the Library.
+2. Choose **Attach audio…** and pick the song's audio file.
+3. Ether copies the file into your catalogue folder, reads its real length, and the **NO AUDIO** tag goes away.
+
+**Attach audio…** only appears on a song with no audio at all. A song that already has a file keeps it.
+
 ## How it behaves on air
 
 - **A / B / C** cue the song on that deck. If the song's audio is only in the cloud, Ether fetches it first and says

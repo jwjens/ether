@@ -123,6 +123,7 @@ import { useUpdater, UpdateBanner } from "./components/Updater";
 import DaemonVersionBanner from "./components/DaemonVersionBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
 import { importIntoAudioLibrary, fileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
+import { songHasNoAudio, attachAudioToSong, firstPicked, NO_AUDIO_HINT } from "./lib/songAttachAudio";
 import { openLinkPreferences } from "./hooks/useRemoteLink";
 import { appShortcut } from "./lib/appShortcuts";
 import { libraryDeckActions, DeckLoadNoticeBar } from "./lib/libraryDeckActions";
@@ -5672,6 +5673,19 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             // so the wording, the disabled reasons and the "found it already in your library"
             // suggestion are identical everywhere. `fileLocationItem` needs presence, which is
             // resolved when the menu opens (ctxPresence below).
+            // ATTACH AUDIO — only on a song with NO audio at all (Spotify / NexGen imports make them). It gives a song its
+            // first file; it never repoints one that has a file (Change File Location stays removed). src/lib/songAttachAudio.ts
+            ...(isSongRow(ctxMenu.song as any) && songHasNoAudio(ctxMenu.song as any) ? [{ label: "Attach audio…", action: async () => {
+              const song = ctxMenu.song; setCtxMenu(null);
+              const r = await attachAudioToSong(song as any, {
+                pick: async () => firstPicked(await (window as any).ether.dialog.openFile({ multiple: false })),
+                importIntoLibrary: (fp) => importIntoAudioLibrary(fp),
+                probeSec: async (fp) => { try { const d = await (window as any).ether.audio.getFileDuration(fp); return typeof d === "number" && d > 0 ? d : null; } catch { return null; } },
+                update: (id, patch) => (window as any).ether.songs.updateById(id, patch),
+              });
+              if (r.message && !r.ok) alert(r.message);
+              if (r.ok) load();
+            } }] : []),
             { label: fileLocationItem(ctxMenu.song.file_path, ctxPresence).label,
               disabled: fileLocationItem(ctxMenu.song.file_path, ctxPresence).disabled,
               action: () => { const it = fileLocationItem(ctxMenu.song.file_path, ctxPresence);
@@ -5920,6 +5934,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     )}
                     {s.content_class === "SPOT" && (
                       <span title="Spot — commercial/promo; excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#f59e0b", background: "rgba(245, 158, 11, 0.14)", border: "1px solid rgba(245, 158, 11, 0.4)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>SPOT</span>
+                    )}
+                    {isSongRow(s as any) && songHasNoAudio(s as any) && (
+                      <span title={NO_AUDIO_HINT} style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#ef4444", background: "rgba(239, 68, 68, 0.12)", border: "1px solid rgba(239, 68, 68, 0.45)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>NO AUDIO</span>
                     )}
                     {isUnmeasured(s) && (() => {
                       const med = medianTrimDb(songs);

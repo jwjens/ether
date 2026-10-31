@@ -453,6 +453,9 @@ export default function SpotifyImport({ onClose }: Props) {
                   {phase === "done" && (
                     <div style={{ fontSize: 12, fontWeight: 700, color: S.green }}>
                       ✓ {tracks.filter(t => t.written).length} tracks added to library
+                      <div style={{ fontWeight: 400, color: "#fbbf24", marginTop: 4 }}>
+                        Spotify gives the song details, not the audio — these can't air until each has its file. They show NO AUDIO in the Library: right-click → Attach audio…
+                      </div>
                     </div>
                   )}
                 </div>

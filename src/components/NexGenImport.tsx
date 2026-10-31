@@ -194,6 +194,11 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
           <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
             ✓ {result.imported} songs imported &nbsp;|&nbsp; {result.skipped} skipped (duplicates)
           </div>
+          {result.imported > 0 && (
+            <div style={{ marginTop: 6, fontSize: 12, color: "#fbbf24" }}>
+              These songs have no audio yet, so they can't air. They show <b>NO AUDIO</b> in the Library — right-click one → <b>Attach audio…</b>
+            </div>
+          )}
           {result.errors.length > 0 && (
             <div style={{ marginTop: 8, fontSize: 11, color: "#ef4444" }}>
               {result.errors.slice(0, 5).map((e, i) => <div key={i}>{e}</div>)}
