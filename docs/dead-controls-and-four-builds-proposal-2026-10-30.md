@@ -160,3 +160,5 @@ its pop-out (PopoutRenderer.tsx:200 passes nothing).
     `window.confirm` does nothing in the installed app (main.js:1823, ConfirmDialog.tsx:1). UNVERIFIED — one check
     settles all of them: in an installed build, right-click a spot → Delete.
 44. **Program Log → PDF Report:** locked to the old "Studio" tier (ProgramLog.tsx ~869-880); not a plans.json feature.
+45. **EAS Logbook missing from the ☰ menu** (found on screen 2026-10-30): reachable only from the native menu bar. **FIXED 6ea9e95**, seen on screen.
+    (A second item, "the Logbook pop-out's Close does nothing", was my misreading and is withdrawn: pop-outs hide on close; Close works.)
