@@ -627,8 +627,12 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
   // Capture spacebar — stop propagation so Live Assist doesn't receive it
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Not while typing in a box. Anywhere else counts — including the waveform, which takes focus when clicked
+      // (tabIndex -1); the keys used to stop working after a click on it until the page itself was clicked.
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t.isContentEditable);
       const mark = markersRef.current[e.code];
-      if (mark !== undefined && e.target === document.body && isPlainKey(e)) {
+      if (mark !== undefined && !typing && isPlainKey(e)) {
         e.preventDefault();
         e.stopImmediatePropagation();
         playheadRef.current = mark;
@@ -636,7 +640,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
         if (playingRef.current) play(mark);
         return;
       }
-      if (e.code === "Space" && e.target === document.body && isPlainKey(e)) {
+      if (e.code === "Space" && !typing && !(t instanceof HTMLButtonElement) && isPlainKey(e)) {   // Space on a focused button presses it
         e.preventDefault();
         e.stopImmediatePropagation();
         if (playingRef.current) pause();
