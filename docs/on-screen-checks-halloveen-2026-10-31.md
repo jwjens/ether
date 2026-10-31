@@ -53,3 +53,37 @@ station's uuid).
 - Fake test file: in the scratchpad only.
 
 Noticed, not investigated: HalloVeen's jukebox request name is `magicalforest`.
+
+## Builds checked after restarts (same day)
+
+**A — Listen live (dd3cfce):** Stream Manager shows **LISTEN LIVE https://listen.ether-technologies.com/halloween ·
+Copy · Open** (shot 32).
+
+**D — voice-tracking mic (185834f):** Settings → Audio Devices → picked "Voicemeeter Out A4": saved
+(`ether_vt_input`), shown ACTIVE. Opened **☰ → Voice Tracker** (new door), pressed REC: the pop-out asked for exactly
+that device and got the track "Voicemeeter Out A4 (VB-Audio Voicemeeter VAIO)". With a saved mic that doesn't exist,
+REC recorded from the default mic and the screen said "The voice-tracking mic picked in Settings isn't connected —
+recording from the default mic." (shot 30). Takes discarded (RECORDED (0)), test value removed.
+
+**B — Stream Metadata Outputs (b60fad5):** schema v69 applied on start (`[migrate-v69] stream_metadata_targets
+ready`). In Settings → Broadcast added two test outputs on HalloVeen: a webhook to a local receiver
+(`127.0.0.1:5555`) and an Icecast output with **This station's own stream** ticked (the default).
+- Test → webhook received `{"title":"Thriller","artist":"Michael Jackson"}` (the song on air); row OK, "last: Michael
+  Jackson - Thriller".
+- Test → Icecast with nothing streaming: ERROR "HTTP 400 … Source does not exist" (the login was accepted).
+- Went live from OVEVENTS on `/halloween` (Jeff: "you can go live now"), Test → Icecast OK; the server's
+  `status-json.xsl` showed title **"Michael Jackson - Thriller"**.
+- Next song started on its own at 16:17:33Z: the webhook received "Be Prepared / Jeremy Irons" and the server's title
+  became **"Jeremy Irons - Be Prepared"**, with no click — both rows OK, 3 sent.
+- Stopped the stream (`/halloween` no source), deleted both test outputs (0 left), stopped the receiver.
+
+**C — Remote Access & Website (f0fcf70):** startup log `[remote] serving on port 4242`.
+- `/now-playing.json` answered `{"station":"halloVeen","title":"Pink Elephants on Parade - From \"Dumbo\"",…,"playing":true}`.
+- `/api/state` without the code → 401; with a wrong code → 401; with the code → now playing + Up Next.
+- Phone commands (sent as the phone page sends them): **Skip** → the next item (the sponsor spot) started; **AUTO off**
+  → main screen MANUAL; **AUTO on** → ● AUTO; **Stop all** → decks stopped, MANUAL; **AUTO on** again → playing
+  ("Dead Man's Party"). HalloVeen was left on AUTO, playing.
+- Settings shows the code, New code, "Ether is answering on port 4242" and the "on your network" wording (shot 33).
+- **UNVERIFIED from another device:** a request to this computer's network address (192.168.0.114:4242) timed out —
+  most likely Windows Firewall holding the first-run "allow on networks" prompt for the dev `electron.exe`. Not
+  changed by me. One check settles it: allow the prompt (private networks), then open the address on a phone.
