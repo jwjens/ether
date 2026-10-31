@@ -42,3 +42,35 @@ export function boardSlots(configured: readonly string[], engineLive: readonly s
   }
   return out;
 }
+
+/** View → Deck A / Deck B / Deck C / Mic Deck (the native View menu; App's visiblePanels). Which board slots the MAIN
+ *  screen leaves out because the operator switched them off there. The Mic Deck entry covers every channel carrying the
+ *  mic: a source channel patched to Mic (the mic is an engine input on a source slot since 2026-09-26) and a leftover
+ *  "mic"-type strip. A per-window view choice, not board state: the row, the engine and the Decks pop-out are untouched,
+ *  and LivePanel names every hidden deck — and whether it is carrying audio — with a Show button, so nothing is on air
+ *  out of sight without the screen saying so. */
+export const VIEW_DECK_KEYS = [
+  { key: "deckA", label: "Deck A" },
+  { key: "deckB", label: "Deck B" },
+  { key: "deckC", label: "Deck C" },
+  { key: "mic",   label: "Mic" },
+] as const;
+
+export function slotsForViewKey(key: string, configs: readonly { slot: string; type?: string; kind?: string | null }[] = []): string[] {
+  if (key === "deckA") return ["A"];
+  if (key === "deckB") return ["B"];
+  if (key === "deckC") return ["C"];
+  if (key === "mic") {
+    const out = new Set<string>(["mic"]);
+    for (const c of configs) if (c && (c.type === "mic" || c.kind === "mic")) out.add(c.slot);
+    return [...out];
+  }
+  return [];
+}
+
+export function viewHiddenSlots(visible: Readonly<Record<string, boolean>> | null | undefined,
+                                configs: readonly { slot: string; type?: string; kind?: string | null }[] = []): string[] {
+  const out = new Set<string>();
+  for (const { key } of VIEW_DECK_KEYS) if (visible && visible[key] === false) for (const s of slotsForViewKey(key, configs)) out.add(s);
+  return [...out];
+}

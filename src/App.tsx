@@ -99,7 +99,7 @@ import { SOURCE_SLOTS, isSweeperKind, type SourceKind, type DeckType } from "./c
 // The board scopes the levels stream to its own station, like every other consumer of it.
 import { matchesStation } from "./lib/levelsScope";
 // A slot the engine is carrying is always on the board — the invariant, with its test.
-import { boardSlots } from "./lib/boardSlots";
+import { boardSlots, viewHiddenSlots, slotsForViewKey, VIEW_DECK_KEYS } from "./lib/boardSlots";
 import { removedSlots } from "./lib/removeSourceChannel";
 import RulesEditor from "./components/RulesEditor";
 import ProcessingPanel from "./components/ProcessingPanel";
@@ -3184,6 +3184,7 @@ export default function App() {
                 jingleOverlay={jingleOverlay}
                 onCloseDock={() => setProgPanel(null)}
                 onOpenImaging={() => { setProgPanel(null); setPanel("imaging"); }}
+                onShowPanel={(key) => setVisiblePanels((p: Record<string, boolean>) => ({ ...p, [key]: true }))}
                 autoAdv={autoAdv} shuffle={shuffle}
                 toggleAuto={toggleAuto} toggleShuffle={toggleShuffle}
                 queueLen={queueLen} showCarts={showCarts}
@@ -3811,7 +3812,7 @@ function JockStripLive(props: Omit<React.ComponentProps<typeof JockStrip>, "deck
   return <JockStrip deckA={d.A} deckB={d.B} {...props} />;
 }
 
-function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, libraryDock, jingleOverlay, onCloseDock, onOpenImaging }: {
+function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, libraryDock, jingleOverlay, onCloseDock, onOpenImaging, onShowPanel }: {
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
@@ -3832,6 +3833,8 @@ function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, show
   onCloseDock: () => void;
   /** Door from the imaging EDITOR (this push-up) into the IMAGING surface. */
   onOpenImaging: () => void;
+  /** Turns a View-menu panel back on (the "Show" on the hidden-decks line). */
+  onShowPanel?: (key: string) => void;
 }) {
   const engine = useAudioEngine();
   // The board shows the countdowns, so it reads the full deck states (src/audio/deckStore.ts) — App no longer passes them.
@@ -4171,6 +4174,11 @@ function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, show
   };
 
   const showQueue = vp.queue !== false;
+  // View → Deck A / B / C / Mic Deck (App's visiblePanels): the board on THIS screen leaves those decks out.
+  const viewHidden = useMemo(() => viewHiddenSlots(vp, deckConfigs || []), [JSON.stringify(vp), JSON.stringify(deckConfigs || [])]);
+  const viewHiddenKeys = VIEW_DECK_KEYS.filter(k => vp[k.key] === false).map(k => ({
+    key: k.key as string, label: k.label as string, live: slotsForViewKey(k.key, deckConfigs || []).some(s => engineSlots.includes(s)),
+  }));
   // Chevron points TOWARD where the queue would expand to. If queue is on
   // the LEFT of decks, collapsed chevron points right (will expand right);
   // if on the RIGHT, points left.
@@ -4279,12 +4287,29 @@ function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, show
           it. It owns its own board state — deck_configs, the ON lamp, the six source-channel writers,
           the jukebox cut — which is exactly what lets it render in two windows without them
           disagreeing. LivePanel keeps only the view flags it actually owns. */}
+      {/* View → Deck A / B / C / Mic Deck: what this screen has hidden, said on the screen — with whether it is carrying
+          audio — so a deck is never on air out of sight without a word (src/lib/boardSlots.ts viewHiddenSlots). */}
+      {viewHiddenKeys.length > 0 && (
+        <div data-view-hidden="1" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "4px 10px", fontSize: 11,
+                      color: "var(--text-secondary)", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)" }}>
+          <span style={{ color: "var(--text-tertiary)" }}>Hidden here (View menu):</span>
+          {viewHiddenKeys.map(h => (
+            <span key={h.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <b>{h.label}</b>
+              {h.live && <span style={{ color: "var(--accent-red, #ef4444)", fontWeight: 700 }}>● carrying audio</span>}
+              {onShowPanel && <button onClick={() => onShowPanel(h.key)} style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)",
+                color: "var(--accent-cyan)", border: "1px solid var(--border-primary)", borderRadius: 0, cursor: "pointer" }}>Show</button>}
+            </span>
+          ))}
+        </div>
+      )}
       <FaderSectionLive
         showCarts={showCarts}
         masterCollapsed={masterCollapsed}
         onToggleMasterCollapsed={toggleMasterCollapsed}
         nowPlaying={nowPlaying}
         narrow={lpViewport.narrow}
+        hiddenSlots={viewHidden}
       />
 
       {/* Bottom dock — carts OR a programming editor. Pushes the decks up (queue

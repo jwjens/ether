@@ -76,6 +76,8 @@ export interface FaderSectionProps {
   nowPlaying?: any;
   /** Below this width the mic strip drops out to give the music decks room, unless a guest is up. */
   narrow?: boolean;
+  /** Slots the main screen's View menu switched off (src/lib/boardSlots.ts viewHiddenSlots). Left out of THIS board only. */
+  hiddenSlots?: string[];
 }
 
 /** The board, reading its decks itself — status and volume only (src/audio/deckStore.ts selectBoard), so it re-renders
@@ -93,6 +95,7 @@ export default function FaderSection({
   onToggleMasterCollapsed,
   nowPlaying,
   narrow = false,
+  hiddenSlots,
 }: FaderSectionProps) {
   const engine = useAudioEngine();
   const { stationId, stationUuid } = useActiveStation();
@@ -140,8 +143,10 @@ export default function FaderSection({
     // A slot the operator removed with the board's remove button stays off the board whatever the engine reports
     // (src/lib/removeSourceChannel.ts).
     const raw = boardSlots(configuredOrder as any, engineSlots, removedSlots(deckConfigs)) as string[];
-    return (narrow && !hasGuestDeck) ? raw.filter(s => s !== "mic") : raw;
-  }, [JSON.stringify(configuredOrder), JSON.stringify(engineSlots), JSON.stringify(removedSlots(deckConfigs)), narrow, hasGuestDeck]);
+    const hide = new Set(hiddenSlots || []);   // View → Deck A/B/C/Mic Deck on the main screen
+    const shown = raw.filter(s => !hide.has(s));
+    return (narrow && !hasGuestDeck) ? shown.filter(s => s !== "mic") : shown;
+  }, [JSON.stringify(configuredOrder), JSON.stringify(engineSlots), JSON.stringify(removedSlots(deckConfigs)), narrow, hasGuestDeck, JSON.stringify(hiddenSlots || [])]);
 
   // ── THE ON LAMP READS THE ROW (v58) ─────────────────────────────────────────────────────────
   // Derived, never held: this component renders in two windows and unstored state asserted downward

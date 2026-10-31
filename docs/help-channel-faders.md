@@ -105,6 +105,22 @@ The strips work like a digital console's fader banks:
   **Enter** to type a level); the source shows a short name ("Announce", "Cart/SFX"), and the full name when you point
   at it; ON and PFL sit one above the other.
 
+## Hiding a deck from the main screen (View menu)
+
+The menu bar's **View → Deck A**, **Deck B**, **Deck C** and **Mic Deck** hide or show that deck's strip on the main
+screen. Click the same entry again to bring it back, or **View → Reset to Default** to show everything.
+
+1. Click **View → Deck C**. Deck C's strip leaves the board.
+2. A line appears above the board: **Hidden here (View menu): Deck C** with a **Show** button. If the hidden deck is
+   playing or has a song loaded it also says **● carrying audio** — a deck is never on air out of sight without the
+   screen saying so.
+3. Press **Show** (or click **View → Deck C** again) to put the strip back.
+
+- **Hiding only changes what you see.** The deck keeps playing, its level and ON stay as they were, and automation
+  carries on. The Decks pop-out window still shows every strip.
+- **Mic Deck** hides every channel set to **Mic**.
+- It lasts until Ether is closed.
+
 ## Decks A, B and C as one strip
 
 Press the slim **A·B·C** tab to the left of Deck A to collapse the three music decks into **one strip**.
