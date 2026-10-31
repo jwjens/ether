@@ -20,5 +20,6 @@ describe("About is truthful", () => {
     expect(a).not.toMatch(/free and open-source software|MIT LICENSE|Released under the MIT License|Studio and Network plans/);
     expect(a).not.toMatch(/const CHANGELOG/);
     expect(a).toMatch(/invoke\("updater:release-notes-of", version\)/);
+    expect(a).toContain("© 2026 Ether Technologies. All rights reserved.");   // Jeff's wording, 2026-10-31
   });
 });

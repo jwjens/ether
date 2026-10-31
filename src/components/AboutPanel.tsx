@@ -244,8 +244,7 @@ export default function AboutPanel({ onClose }: Props) {
 
               {/* Legal footer */}
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.18)", lineHeight: 1.6, borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 16 }}>
-                © 2025–2026 Ether Technologies. The Open Source tab lists the open-source parts Ether is built with and their
-                licenses.
+                © 2026 Ether Technologies. All rights reserved.
               </div>
             </div>
           )}
