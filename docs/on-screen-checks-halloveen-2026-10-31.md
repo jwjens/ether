@@ -1,0 +1,55 @@
+# On-screen checks on HalloVeen (2026-10-31)
+
+Jeff, 2026-10-31: "Nothing is live. Stop pausing for checks. Run the remaining checks right on HalloVeen, including A's
+Start/Stop on its normal mount. Use test items you create, and delete them after."
+
+Dev Ether on OVEVENTS (unpackaged, `release/1019` at e74524f), HalloVeen = station 2, driven over the DevTools port (no
+mouse or keyboard). Screenshots are in the session scratchpad `shots\20-27`.
+
+## A. Stream Manager — Start / Stop on `/halloween`
+
+| Step | What happened | Receipt |
+|---|---|---|
+| Open ☰ → Stream Manager | Pop-out opened: halloVeen, OFF AIR, Sending to `44.244.52.207:8000/halloween`, 128 kbps (set), password "set — leave blank to keep" | shot 21 |
+| Start while OV held `/halloween` | CONNECTING… → ERROR "Streaming failed after repeated ffmpeg restarts. Check Icecast server URL and credentials." → CONNECTING… (Ether kept retrying). **No Stop button was shown in ERROR** — stopped through `stream:stop-live`. | text receipts |
+| Jeff signed OV off the mount and pressed ON AIR himself | Stream Manager showed ON AIR, on air 0m 52s → 1m 14s, real bitrate 128 kbps, **Listeners 0** (from the server's status page) | shot 22 |
+| Stop in Stream Manager | OFF AIR; main screen light OFF AIR; server: `/halloween` no longer listed | shot 23, `status-json.xsl` |
+| Start in Stream Manager | ON AIR 0m 1s → 0m 17s, Listeners 0; server lists `/halloween` with 0 listeners | text receipts |
+| Stop in Stream Manager | OFF AIR | text receipt |
+
+**Two defects found and fixed (c372210):**
+1. In ERROR, Ether keeps retrying every 30 s but the screen offered only Start. Stop is now offered whenever the stream is
+   not stopped.
+2. The error replaced the server's reason with a generic "check URL and credentials". It now keeps the reason — for a 403:
+   "The server refused the stream (403): another computer may be sending to this mount, or the password is wrong. Ether
+   tries again every 30 seconds; press Stop to end it." A stopped stream shows no stale error.
+
+**UNVERIFIED on screen:** the new error text and the Stop-in-ERROR button. Both need the daemon restarted (the daemon
+does not reload) and a held mount to fail against. Unit tests cover them (`electron/stream-manager.test.js`).
+
+**Added on Jeff's ask (dd3cfce):** a **Listen live** box with the station's public listener page (Copy / Open), the same
+address as Settings → Broadcast → Your listener page. UNVERIFIED on screen until the next restart (main must send the
+station's uuid).
+
+## The six checks
+
+| Check | What I did | Result |
+|---|---|---|
+| Scan Durations (444136c) | `get_file_duration` on a real library song and on a fake `.mp3` (text) | real: **211.1 s**; fake: **0** (reported as failed, not a length) |
+| Normalize (4d429cd) | `analyze_lufs` on the same two files | real: `{ok:true, gain:-3.80}`; fake: `{ok:false, error:"Probe: … no suitable format reader found"}` — no made-up −14 dB |
+| Shows delete (fc0460f) | Created test show 17 "ETHER TEST show (delete me)" on HalloVeen, then `shows.deleteById(17)` (the call the Delete button now makes) | `{ok:true}`; row tombstoned (`deleted_at` set) |
+| Attach audio to a spot (aa1b19d) | Created test spot 10 with no audio. Edit Spot showed **"No audio — this spot can't air until you attach its audio" · Attach audio…** (shot 25). Ran the same steps the button runs after the file is picked (copy into the audio library, probe length, update the spot). Reopened Edit: **"Audio: ETHER TEST spot audio.mp3 · Replace audio…"** (shot 26) | works. The Windows file picker itself was not driven (native dialog). |
+| Jukebox full link (a49a141) | Set HalloVeen's request link to `https://listen.ether-technologies.com/jukebox/magicalforest` (the same name it already had), read Links (`links:account`), set it back to `magicalforest` | request name read as `magicalforest` from the full address; restored |
+| Show+ DAW → To Deck (39c0d1c) | All HalloVeen decks idle (AUTO did not need stopping). Sent a 2 s test WAV through `showplus.sendToDeck("C", …)` | `{ok:true}`; Deck C: title **"Show+ Mix"**, file in the profile's `showplus-sends` folder (shot 27). The DAW's own record/render screen was not driven. |
+
+## Cleanup
+
+- Test show 17: deleted (tombstone, syncs as a delete).
+- Test spot 10: deleted (`spots.deleteById`, tombstone); its audio copy removed from `Ether\catalogue`; no song used it;
+  `file_key` was null (never uploaded).
+- Deck C: stopped and empty.
+- Test mix WAV: removed from `showplus-sends`.
+- Jukebox request link: back to `magicalforest`.
+- Fake test file: in the scratchpad only.
+
+Noticed, not investigated: HalloVeen's jukebox request name is `magicalforest`.
