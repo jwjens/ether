@@ -2,7 +2,6 @@ import { etherConfirm } from "./lib/etherConfirm";
 import { isPlainKey } from "./lib/plainKey";
 import { bootSeq, bootMarkAuthComplete } from "./audio/boot-seq";
 import UserLogin from "./components/UserLogin";
-import KeyboardHelp from "./components/KeyboardHelp";
 import TrialGate from "./components/TrialGate";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import GenerateProgressBar from "./components/GenerateProgressBar";
@@ -47,7 +46,7 @@ import { autoCueSong } from "./audio/songAnalysis";
 import Waveform from "./components/Waveform";
 import ClipEditor from "./components/ClipEditor";
 import { useCaptions, CaptionsOverlay, CaptionsLogPanel } from "./components/Captions";
-import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";
+import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, cartWallOwnsKey, type DeckConfig } from "./components/DeckConfigurator";
 import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
 import { FaderSectionLive } from "./components/FaderSection";
 import MasterOutput, { consoleLog } from "./components/MasterOutput";
@@ -2072,6 +2071,7 @@ export default function App() {
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
       // appShortcut() is null for any key held with Ctrl / Alt / Meta (isPlainKey): Ctrl+S is not S, Ctrl+A is not A.
+      if (cartWallOwnsKey(e.key)) return;   // an open cart wall's keys fire carts only (item 27)
       switch (appShortcut(e)) {
         // Space and B REMOVED (audit 2, 2026-09-27). They played / paused / resumed decks straight from the keyboard —
         // outside the board's ON button and the daemon's serialized path (the same class of defect as KeyX below).
@@ -2803,7 +2803,8 @@ export default function App() {
     <AudioEngineProvider>
     <EtherErrorBoundary>
     <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <KeyboardHelp />
+      {/* The old second overlay (KeyboardHelp) is no longer mounted: Shift+/ opened both at once and it listed keys that
+          don't exist (N, F1–F4, F10, F12). The sheet below lists the keys appShortcut() really answers (item 27). */}
       {/* Jukebox is no longer a takeover of this window — it opens as its own jukebox pop-out
           (hamburger → Windows → Jukebox → #popout/jukebox). See the rebuild design §0.1. */}
       <TrialGate />
@@ -3333,14 +3334,15 @@ export default function App() {
             </div>
             {[
               { group: "Navigation", items: [
-                { key: "N", desc: "Live Assist view" },
                 { key: "L", desc: "Library" },
                 { key: "S", desc: "Schedule / Clocks" },
-                { key: "G", desc: "Program Log" },
+                { key: "G", desc: "Play Log" },
                 { key: "A", desc: "Toggle Automation" },
               ]},
               { group: "Interface", items: [
                 { key: "Shift + ?", desc: "Toggle this shortcut overlay" },
+                { key: "Esc", desc: "Close this overlay and the ☰ menu" },
+                { key: "1–8, Q–I, A–K", desc: "While the CARTS push-up is open: fire carts 1–24 (A, S, G fire carts, not the keys above)" },
                 { key: "≡ Menu", desc: "Theme Studio" },
                 // src/lib/plainKey.ts — Ctrl+S is not S, Ctrl+A is not A (docs/help-keyboard-shortcuts.md)
                 { key: "Ctrl / Alt / ⌘ + key", desc: "Not a shortcut — does nothing" },

@@ -23,7 +23,9 @@ Ether's shortcuts are **single keys**. You press the key on its own:
 - **A** turns automation on or off.
 - **Shift + ?** shows or hides the shortcut list.
 - **Esc** closes the shortcut list and the ☰ menu.
-- On a cart wall, **1–8, Q–I, A–K** fire the first 24 carts (see `docs/help-module-carts.md`).
+- On a cart wall, **1–8, Q–I, A–K** fire the first 24 carts (see `docs/help-module-carts.md`). While a cart wall is
+  open those keys fire carts only: **A**, **S** and **G** fire carts 17, 18 and 21 and do not turn automation on or off or
+  open Clocks or the Play Log.
 
 Editors have their own single keys while they are open:
 - the Reel Splitter, Voice Tracker, Show+ DAW and phone recorder: Space plays, Delete removes, plus each editor's

@@ -619,9 +619,23 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
 
   const togglePlay = () => playing ? pause() : play(playheadRef.current);
 
+  // I / N / O / U — the keys shown on the cue-point strip (item 41): jump to Cue In / Intro End / Outro Start / Cue Out,
+  // exactly like clicking that point (keeps playing if it was playing). Only Space worked before.
+  const markersRef = useRef<Record<string, number>>({});
+  markersRef.current = { KeyI: cueIn, KeyN: introEnd, KeyO: outroStart, KeyU: cueOut || duration };
+
   // Capture spacebar — stop propagation so Live Assist doesn't receive it
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const mark = markersRef.current[e.code];
+      if (mark !== undefined && e.target === document.body && isPlainKey(e)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        playheadRef.current = mark;
+        setPlayhead(mark);
+        if (playingRef.current) play(mark);
+        return;
+      }
       if (e.code === "Space" && e.target === document.body && isPlainKey(e)) {
         e.preventDefault();
         e.stopImmediatePropagation();

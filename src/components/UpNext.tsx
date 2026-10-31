@@ -531,7 +531,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
         {queue.length < 3 ? (
           <div style={{ padding: "28px 14px", textAlign: "center" as any }}>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>Queue empty</div>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", opacity: 0.4 }}>Drag carts here or use GEN LOG</div>
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", opacity: 0.4 }}>Drag carts here, or generate the hour in Schedule</div>
           </div>
         ) : (
           <AnimatePresence initial={false}>

@@ -686,6 +686,11 @@ function defaultCarts(): CartSlot[] {
 // Per renderer: each window has its own module scope, so walls in different windows never contend.
 const mountedCartWalls: string[] = [];            // this window's walls, oldest first
 let focusedCartWall: string | null = null;
+/** While a cart wall is open its 24 keys belong to the carts (item 27: A, S and G also toggled AUTO / opened Clocks /
+ *  the Play Log while firing carts 17, 18 and 21). App.tsx's single-key shortcuts ask this first. */
+export function cartWallOwnsKey(key: string): boolean {
+  return mountedCartWalls.length > 0 && CART_HOTKEYS.includes(String(key || "").toUpperCase());
+}
 function ownsCartHotkeys(id: string): boolean {
   if (focusedCartWall && mountedCartWalls.includes(focusedCartWall)) return focusedCartWall === id;
   return mountedCartWalls[mountedCartWalls.length - 1] === id;
