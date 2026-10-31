@@ -13641,7 +13641,9 @@ async function streamGoLive(args = {}) {
       const bitrate = require("./stream-args").icecastBitrateOf(station);
       const port = require('../audiod/stream').serverAndPort(server, station.icecast_port).port;   // the station's own port
       if (!port) return { ok: false, error: 'No port set for this station. Set it in Stream Manager.' };
-      const streamArgs = { stationId, config: { server, password: pw, mount, bitrate, sampleRate: 44100, icecastPort: station.icecast_port } };
+      const format = require("./stream-args").streamFormatOf(station);   // Station Manager → Format (was always MP3)
+      { const fa = require("./stream-args").formatArgs(format, bitrate); if (!fa.ok) return { ok: false, error: fa.error }; }
+      const streamArgs = { stationId, config: { server, password: pw, mount, bitrate, format, sampleRate: 44100, icecastPort: station.icecast_port } };
       try { await audiodClient.cmd('startStream', streamArgs); }
       catch (e) { return { ok: false, error: 'daemon startStream failed: ' + e.message }; }
       // Phase D (e): record stream intent HERE (this is the real start path — the audio:daemon bridge
@@ -13673,7 +13675,9 @@ async function streamGoLive(args = {}) {
 
     // The station's bitrate on this path too (electron/stream-args.js) — it was hard-coded 128k here.
     const SA = require("./stream-args");
-    _spawnStream(stationId, SA.programBusEncoderArgs({ port, sampleRate, bitrateKbps: SA.icecastBitrateOf(station), url: state.url }),
+    const kbps = SA.icecastBitrateOf(station), format = SA.streamFormatOf(station);   // Station Manager → Bitrate / Format
+    { const fa = SA.formatArgs(format, kbps); if (!fa.ok) { state.armed = false; return { ok: false, error: fa.error }; } }
+    _spawnStream(stationId, SA.programBusEncoderArgs({ port, sampleRate, bitrateKbps: kbps, url: state.url, format }),
       `programbus:${port}→${mount}`);
 
     console.log(`[stream/${stationId}] ffmpeg started (programbus:${port}) → ${state.url}`);

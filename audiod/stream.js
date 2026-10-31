@@ -81,7 +81,7 @@ class StreamSupervisor {
     this.armed = false; this.proc = null;
     this.failureCount = 0; this.firstFailureTime = 0;
     this.statusState = "idle"; this.speed = null; this.bitrate = null; this.startTime = null; this.errorMsg = null; this.url = "";
-    this._sampleRate = 44100; this._bitrate = 128;
+    this._sampleRate = 44100; this._bitrate = 128; this._format = "mp3";
   }
 
   status() {
@@ -102,6 +102,10 @@ class StreamSupervisor {
     const mount = String(config.mount || "/live").trim();
     this._sampleRate = config.sampleRate || 44100;
     this._bitrate = config.bitrate || 128;
+    // The station's chosen format (audiod/stream-format.js) — it was always MP3 whatever Station Manager said.
+    const fa = require("./stream-format").formatArgs(config.format || "mp3", this._bitrate);
+    if (!fa.ok) { this.statusState = "error"; this.errorMsg = fa.error; this._emit(); return { ok: false, error: this.errorMsg }; }
+    this._format = fa.format;
     const sp = serverAndPort(server, config.icecastPort);
     if (!sp.port) { this.statusState = "error"; this.errorMsg = "No port set for this station. Set it in Stream Manager."; this._emit(); return { ok: false, error: this.errorMsg }; }
     this.url = `icecast://source:${pw}@${sp.host}:${sp.port}${mount}`;
@@ -119,8 +123,7 @@ class StreamSupervisor {
     const args = [
       "-f", "f32le", "-ar", String(this._sampleRate), "-ac", "2",
       "-i", `tcp://127.0.0.1:${port}`,
-      "-c:a", "libmp3lame", "-b:a", `${this._bitrate}k`,
-      "-f", "mp3", "-content_type", "audio/mpeg",
+      ...require("./stream-format").formatArgs(this._format, this._bitrate).args,
       this.url,
     ];
     const bin = ffmpegBin || "ffmpeg";

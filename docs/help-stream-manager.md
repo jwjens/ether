@@ -39,6 +39,16 @@ It shows:
    is only one set.
 3. Click **▶ Start streaming** to go on air, or **⏹ Stop streaming** to stop. ON AIR on the main screen changes with it.
 
+## Stream format (MP3, AAC, OGG)
+
+The format is set in **Station Manager → (the station) → ICECAST → Format**.
+
+1. Choose **MP3**, **AAC** or **OGG** and save.
+2. Stop and start the stream (or start it if it's off). The stream uses the new format from that start.
+
+- **MP3** plays everywhere. **AAC** sounds better at low bitrates. **OGG** (Vorbis) is an open format.
+- With **OGG**, Icecast doesn't accept song-title updates, so listeners' players may not show the song playing.
+
 ## How it behaves
 
 - Saved settings are used the next time the stream starts. If it is on air, stop and start it to switch over.

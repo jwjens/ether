@@ -367,6 +367,11 @@ function StationEditor({
               </select>
             </EF>
           </div>
+          {/* The format now reaches the encoder (audiod/stream-format.js); it takes effect the next time the stream starts. */}
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.5 }}>
+            The stream uses this format from the next time it starts.
+            {(form.icecast_format || "mp3") === "ogg" && " OGG: Icecast doesn't take song-title updates for an Ogg stream, so listeners' players may not show the song playing."}
+          </div>
 
           {/* ── Phase 3 — rotation engine (2026-08-10) ────────────────────────────────────────────
               Local rollout flag; never syncs. Goal mode must not be switched on until this station's

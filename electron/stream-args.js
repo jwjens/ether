@@ -11,16 +11,18 @@ function icecastBitrateOf(station) {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 128;
 }
 
-/** ffmpeg arguments for the in-process programme-bus encoder. */
-function programBusEncoderArgs({ port, sampleRate, bitrateKbps, url }) {
+const { streamFormatOf, formatArgs } = require("../audiod/stream-format");
+
+/** ffmpeg arguments for the in-process programme-bus encoder. `format` = the station's Format (mp3 / aac / ogg). */
+function programBusEncoderArgs({ port, sampleRate, bitrateKbps, url, format = "mp3" }) {
+  const fa = formatArgs(format, bitrateKbps);
+  if (!fa.ok) throw new Error(fa.error);
   return [
     "-f", "f32le", "-ar", String(sampleRate), "-ac", "2",
     "-i", `tcp://127.0.0.1:${port}`,
-    "-c:a", "libmp3lame", "-b:a", `${bitrateKbps}k`,
-    "-f", "mp3",
-    "-content_type", "audio/mpeg",
+    ...fa.args,
     url,
   ];
 }
 
-module.exports = { icecastBitrateOf, programBusEncoderArgs };
+module.exports = { icecastBitrateOf, programBusEncoderArgs, streamFormatOf, formatArgs };
