@@ -3026,6 +3026,8 @@ export default function App() {
                   // Health Monitor and Announcements were native-menu-only (audit 23) — doors before rooms.
                   { key: "health",         emoji: "🩺", label: "Health Monitor",     panel: "health" },
                   { key: "announce",       emoji: "📢", label: "Announcements",      panel: "announce" },
+                  // EAS Logbook was native-menu-only (Jeff, 2026-10-30) — doors before rooms; same pop-out as Menu → EAS Logbook.
+                  { key: "po-eas",         emoji: "🚨", label: "EAS Logbook",        panel: "eas" },
                   { key: "cartwall",       emoji: "🎛️", label: "Carts",              panel: "carts" },
                   { key: "po-decks",       emoji: "🎚", label: "Decks",              panel: "decks" },
                   { key: "po-processor",   emoji: "🎛", label: "Processor",          panel: "processor" },

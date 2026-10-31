@@ -33,3 +33,13 @@ describe("the ☰ menu is a door to the Patch Bay (Jeff, 2026-10-28)", () => {
     expect(main).toMatch(new RegExp(`"multioutput":\\s*"${label}"`));
   });
 });
+
+describe("the ☰ menu is a door to the EAS Logbook (Jeff, 2026-10-30)", () => {
+  const main = fs.readFileSync(path.join(__dirname, "..", "..", "electron", "main.js"), "utf8");
+  it("the ☰ entry opens the same pop-out as Menu → EAS Logbook, under that pop-out's title", () => {
+    expect(main).toMatch(/label: "EAS Logbook",\s*click: \(\) => menuNav\("nav:eas", "eas"\)/);
+    const e = entries.find(x => x.key === "po-eas");
+    expect(e?.panel).toBe("eas");
+    expect(router).toMatch(new RegExp(`"eas":\\s*"${e?.label}"`));
+  });
+});

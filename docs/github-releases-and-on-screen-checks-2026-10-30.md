@@ -38,4 +38,8 @@ deck while AUTO is playing: Normalize, attach audio, Scan Durations, Shows delet
 
 ### New dead items seen during the checks
 - **The hamburger menu has no EAS Logbook entry.** The only way in is the window's native menu bar (main.js:3717).
-- **EAS Logbook pop-out → Close does not close the window.** Clicked; the window stayed open (closed it via DevTools).
+- ~~EAS Logbook pop-out → Close does not close the window.~~ **WITHDRAWN — my error.** Pop-outs HIDE on close
+  (main.js:8971); a hidden window is still a DevTools target, and I read "target still listed" as "window still open".
+  Re-checked with Windows' own window list: visible after reopening, hidden after Close. Close works.
+- **Fixed:** the ☰ menu now has **EAS Logbook** (same pop-out as Menu → EAS Logbook). Seen on screen: the entry is
+  there (shots/11) and opens the Logbook.
