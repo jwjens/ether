@@ -43,3 +43,13 @@ deck while AUTO is playing: Normalize, attach audio, Scan Durations, Shows delet
   Re-checked with Windows' own window list: visible after reopening, hidden after Close. Close works.
 - **Fixed:** the ☰ menu now has **EAS Logbook** (same pop-out as Menu → EAS Logbook). Seen on screen: the entry is
   there (shots/11) and opens the Logbook.
+
+### Update Details after the restart (Jeff's item 4)
+- `updater:release-notes` now asks from **4.6.69** (Ether's version); before the fix it asked from 43.5.1. CDP receipt.
+- The real `ReleaseNotesPopup` mounted in the running Ether, answered by the real main handler: it renders and shows the
+  answer (shots/12-details-popup-real.png). Asked for 4.6.57, which is older than this Ether, so it lists nothing.
+- **Not seen on screen: the popup filled with notes.** The update window only offers a version newer than the running
+  one, and the newest published release (4.6.57) is older than this Ether (4.6.69), so no real answer has notes in it.
+  `window.ether` is locked by Electron, so a test answer can't be handed in. The selection itself was checked live
+  against GitHub (4.6.49 → 4.6.57 = 4.6.57, 4.6.52, 4.6.50) and by 7 tests. It will show for real on the first
+  machine offered a newer published release.
