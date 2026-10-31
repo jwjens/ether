@@ -7811,12 +7811,24 @@ ipcMain.handle("dialog:openFile", async (_, options) => {
 ipcMain.handle("dialog:openDirectory", async () => {
   console.log("[DIALOG] openDirectory called");
   const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
+  if (!result.canceled && result.filePaths[0]) _userChosenDirs.add(path.resolve(result.filePaths[0]));
   return result.canceled ? null : result.filePaths[0];
 });
 
 ipcMain.handle("dialog:saveFile", async (_, options) => {
   const result = await dialog.showSaveDialog(mainWindow, options || {});
+  if (!result.canceled && result.filePath) _userChosenDirs.add(path.dirname(path.resolve(result.filePath)));
   return result.canceled ? null : result.filePath;
+});
+
+// fs:writeFile (dead-controls items 1 and 2): Show+ DAW Export WAV / Export stems / Save session, the Play Log CSV
+// export and the broadcast editor exports all called it and it had no handler — nothing was ever written. It writes ONLY
+// into a folder the operator picked in a Save dialog this run (the picked file, or the stems beside it), never anywhere
+// a window names on its own. electron/user-write.js.
+const _userChosenDirs = new Set();
+ipcMain.handle("fs:writeFile", async (_, filePath, data) => {
+  try { return require("./user-write").writeUserFile(filePath, data, { allowedDirs: _userChosenDirs, fs }); }
+  catch (e) { return { ok: false, error: e.message }; }
 });
 
 // Watermark verification — reads a WAV file and extracts/verifies the Ether LSB watermark

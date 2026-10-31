@@ -2699,7 +2699,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         });
         const path = typeof res === "string" ? res : res?.filePath;
         if (path) {
-          await ether.fs.writeFile(path, new Uint8Array(wavBuf));
+          const w = await ether.fs.writeFile(path, new Uint8Array(wavBuf));
+          if (!w?.ok) { setStatus(`✗ Export failed: ${w?.error || "nothing was written"}`); return; }
           setStatus(`✓ Exported${embedWm ? " (watermarked)" : ""}: ${path}`);
           setLastExportPath(embedWm ? path : null);
           if (embedWm) {
@@ -2808,7 +2809,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
       if (basePath && ether?.fs?.writeFile) {
         const stemPath = basePath.replace(/\.wav$/i, `_${safeName}.wav`);
-        await ether.fs.writeFile(stemPath, new Uint8Array(wav));
+        const w = await ether.fs.writeFile(stemPath, new Uint8Array(wav));
+        if (!w?.ok) { setStatus(`✗ Stem "${t.name}" not written: ${w?.error || "nothing was written"}`); return; }
       } else {
         const blob = new Blob([wav], { type: "audio/wav" });
         const url = URL.createObjectURL(blob);
@@ -2885,7 +2887,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         });
         const path = typeof res === "string" ? res : res?.filePath;
         if (path) {
-          await ether.fs.writeFile(path, json);
+          const w = await ether.fs.writeFile(path, json);
+          if (!w?.ok) { setStatus(`✗ Save failed: ${w?.error || "nothing was written"}`); return; }
           setStatus(`✓ Saved session${droppedBlobRegions ? ` (${droppedBlobRegions} recording(s) skipped — bounce them first)` : ""}`);
           return;
         }

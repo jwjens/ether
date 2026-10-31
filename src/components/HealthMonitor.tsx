@@ -499,6 +499,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [dbSchemaVersion, setDbSchemaVersion] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState(false);
+  const [exportError, setExportError] = useState("");
   const [sessionStart] = useState(Date.now());
   const { stationId, stationUuid, isReady } = useActiveStation();
 
@@ -831,7 +832,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   };
 
   const exportPlayLog = async () => {
-    setExporting(true);
+    setExporting(true); setExportError("");
     try {
       const rows = await query<{ title: string; artist: string; deck: string; played_at: number }>(
         "SELECT title, artist, deck, played_at FROM play_log ORDER BY played_at DESC LIMIT 10000"
@@ -847,17 +848,20 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         }),
       ].join("\n");
 
-      const writeTextFile = (p: string, data: string, opts?: any) => (window as any).ether.fs.writeFile(p, data); const BaseDirectory = {};
+      // Save where the operator picks (Item 2: the write had no handler, so a file saying "Play log export failed"
+      // was downloaded instead). Cancel = nothing written; a failure is said, never dressed up as a CSV.
+      const ether = (window as any).ether;
       const filename = `ether_playlog_${new Date().toISOString().split("T")[0]}.csv`;
-      await writeTextFile(filename, lines);
-      setExported(true);
-      setTimeout(() => setExported(false), 3000);
+      const picked = await ether.dialog.saveFile({ defaultPath: filename, filters: [{ name: "CSV", extensions: ["csv"] }] });
+      const p = typeof picked === "string" ? picked : picked?.filePath;
+      if (p) {
+        const w = await ether.fs.writeFile(p, lines);
+        if (!w?.ok) throw new Error(w?.error || "nothing was written");
+        setExported(true);
+        setTimeout(() => setExported(false), 3000);
+      }
     } catch (e) {
-      // Fallback: download via browser
-      const blob = new Blob(["Play log export failed"], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = "playlog.csv"; a.click();
+      setExportError(String((e as any)?.message || e));
     }
     setExporting(false);
   };
@@ -1596,9 +1600,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                 <polyline points="7 10 12 15 17 10"/>
                 <line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
-              {exported ? "✓ Saved to Downloads" : exporting ? "Exporting..." : "Export Play Log CSV"}
+              {exported ? "✓ Saved" : exporting ? "Exporting..." : "Export Play Log CSV"}
             </button>
           </div>
+          {exportError && <div role="alert" style={{ fontSize: 12, color: "#ef4444", marginTop: 6 }}>Play log not exported: {exportError}</div>}
           {health && (
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
               {health.playLogCount.toLocaleString()} entries · Last played: {health.lastPlayedAt ? new Date(health.lastPlayedAt * 1000).toLocaleString() : "never"}
