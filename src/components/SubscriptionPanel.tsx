@@ -4,6 +4,7 @@ import { stampLicenseEverywhere } from "../lib/ccData";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 import { setPlanGlobally, usePlan } from "../hooks/usePlan";
+import { planName } from "../lib/planLabels";
 
 // ── Stripe config ──
 const STRIPE_PK = "pk_live_51TCwP5QJRnsdUhPMYsv0CIkEkcdiINRMDKgYaLiuOdOiTiBNmdxILemKaPYiNRNCM4hAPOcplpLUl2bjpuqGRzbE00YnjZ0ZEh";
@@ -241,13 +242,9 @@ export default function SubscriptionPanel() {
   };
 
   const planLabel = (plan: PlanTier) => {
-    if (plan === "pro")              return "Studio";
-    if (plan === "station")          return "Network";
-    if (plan === "pro_lifetime")     return "Studio Lifetime";
-    if (plan === "station_lifetime") return "Network Lifetime";
-    if (plan === "operator")         return "Enterprise";
+    // One table of names (src/lib/planLabels.ts): station / pro / unlimited carry the catalog's names.
     if (plan === "unlimited")        return "Unlimited";
-    return "Solo";
+    return planName(plan);
   };
 
   // ── Early Adopter ribbon (corner) ─────────────────────────────
@@ -403,7 +400,7 @@ export default function SubscriptionPanel() {
             Sign in to activate
           </div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
-            Use the email and password from your Ether account. During your free trial this unlocks the full Network plan.
+            Use the email and password from your Ether account. During your free trial this unlocks the full Unlimited plan.
           </div>
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
             <input

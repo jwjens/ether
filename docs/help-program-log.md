@@ -139,7 +139,7 @@ After a Clear, press Fill Day to rebuild — it fills only the gaps.
 
 ## Export
 
-**⬇ CSV**, **🖨 Print** and **📄 PDF Report** (Studio plan) export the day you are looking at.
+**⬇ CSV**, **🖨 Print** and **📄 PDF Report** (Station, Pro or Unlimited plan) export the day you are looking at.
 
 ## Editing an hour (✎ Edit)
 

@@ -15,6 +15,7 @@
 
 import { useState, useEffect } from "react";
 import { OWNER_LICENSE_KEY } from "../lib/devAccess";
+import { requiredPlansText } from "../lib/planLabels";
 
 // unlimited (2026-10-29): the catalog's Unlimited plan — its own key, renewing and expiring like the other paid plans.
 export type PlanTier = "free" | "pro" | "pro_lifetime" | "station" | "station_lifetime" | "operator" | "unlimited";
@@ -142,9 +143,11 @@ export function UpgradePrompt({ feature, required, compact = false, onUpgrade }:
   // Operator tier is enterprise-only — never show a self-serve upgrade prompt
   if (required === "operator") return null;
 
-  const label  = required === "pro" ? "Studio" : "Network";
+  // The catalog plans that pass this gate, by its own rank (src/lib/planLabels.ts) — the old Studio / Network names are gone.
+  const label  = requiredPlansText(required);
   const color  = required === "pro" ? "var(--accent-cyan)" : "#a78bfa";
-  const price  = required === "pro" ? "$19/mo" : "$79/mo";
+  // Was "$19/mo" / "$79/mo" — prices from the old tiers. Prices live in the catalog; Subscription shows them.
+  const price  = "prices in Subscription";
 
   const handleUpgrade = () => {
     if (onUpgrade) { onUpgrade(); return; }

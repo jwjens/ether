@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { usePlan } from "../hooks/usePlan";
+import { requiredPlansText } from "../lib/planLabels";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { whyThisSongText } from "../lib/whyThisSong";
 import {
@@ -874,7 +875,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
           </div>
           <button
             onClick={isPro ? exportPDF : () => window.dispatchEvent(new CustomEvent("ether:open-subscription"))}
-            title={isPro ? "Export professional PDF traffic report" : "Studio plan required"}
+            title={isPro ? "Export professional PDF traffic report" : `${requiredPlansText("pro")} plan required`}
             style={{
               padding: "6px 4px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700,
               cursor: "pointer",

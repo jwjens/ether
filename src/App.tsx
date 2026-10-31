@@ -124,6 +124,7 @@ import DaemonVersionBanner from "./components/DaemonVersionBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
 import { importIntoAudioLibrary, fileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
 import { songHasNoAudio, attachAudioToSong, firstPicked, NO_AUDIO_HINT } from "./lib/songAttachAudio";
+import { planName, requiredPlansText } from "./lib/planLabels";
 import { openLinkPreferences } from "./hooks/useRemoteLink";
 import { appShortcut } from "./lib/appShortcuts";
 import { libraryDeckActions, DeckLoadNoticeBar } from "./lib/libraryDeckActions";
@@ -2872,9 +2873,9 @@ export default function App() {
             </button>
           )}
           {!requirePlan("station", currentPlan as PlanTier) && (
-            <button onClick={() => setPanel("subscription")} title={currentPlan === "free" ? "Upgrade your plan" : "Your plan: Studio — see plans"} style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => setPanel("subscription")} title={currentPlan === "free" ? "Upgrade your plan" : `Your plan: ${planName(currentPlan)} — see plans`} style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              {!viewport.medium && (currentPlan === "free" ? "Upgrade" : "Studio")}
+              {!viewport.medium && (currentPlan === "free" ? "Upgrade" : planName(currentPlan))}
             </button>
           )}
           {devToolsEnabled && (
@@ -5539,7 +5540,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           </button>
           {isStation
             ? <button onClick={() => setShowNexGen(!showNexGen)} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showNexGen ? "Cancel" : "NexGen / ENCO"}</button>
-            : <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "rgba(167,139,250,0.08)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer" }} title="Network plan required">🔒 NexGen / ENCO</button>
+            : <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "rgba(167,139,250,0.08)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer" }} title={`${requiredPlansText("station")} plan required`}>🔒 NexGen / ENCO</button>
           }
           <button onClick={() => { setShowCreateCat(p => !p); setShowImport(false); }} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: showCreateCat ? "var(--accent-purple)" : "var(--bg-secondary)", color: showCreateCat ? "#fff" : "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showCreateCat ? "Cancel" : "+ Category"}</button>
           {libraryBorrowed

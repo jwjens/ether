@@ -2683,7 +2683,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     // Part 1 — the database (library list, clocks, schedule, settings).
     try {
       const r: any = await ether.invoke("cloud-backup:run-now");
-      if (!r?.ok) throw new Error(r?.tier_insufficient ? "Cloud backup requires the Network plan." : (r?.error || "Backup failed"));
+      if (!r?.ok) throw new Error(r?.tier_insufficient ? "Cloud backup needs a Station, Pro or Unlimited plan." : (r?.error || "Backup failed"));
       setR2LastBackup(Math.floor(Date.now() / 1000));
       setR2LastStatus("success");
     } catch (e: any) {
