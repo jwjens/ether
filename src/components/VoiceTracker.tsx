@@ -751,7 +751,10 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
     stopEditPlayback();
     try {
       const fp = await writeTakeFile();
-      window.dispatchEvent(new CustomEvent("ether:deck-load", { detail: { deck, filePath: fp, title: "[VT] " + takeTitle() } }));
+      // Through THE ONE DECK LOAD (main.js audio:load → loadDeckFile), like every other door. The old window event had
+      // no listener, so the take reached no deck (dead-controls item 3).
+      const r = await (window as any).ether.audio.load(deck, fp, "[VT] " + takeTitle(), "", 0, stationId);
+      if (r === false || (r && typeof r === "object" && r.ok === false)) throw new Error(`Deck ${deck} did not load the take${r?.error ? `: ${r.error}` : ""}`);
       discardEdit();
     } catch (e) { console.error("[VoiceTracker] send to deck failed:", e); alert("Failed to send: " + String(e)); }
   };
