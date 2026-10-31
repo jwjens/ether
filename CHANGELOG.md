@@ -1,3 +1,34 @@
+## [4.6.70] — unreleased
+
+### Added
+
+- **Stream Manager (☰ → Stream Manager):** the station's live stream — status, time on air, real bitrate, listener count
+  from your Icecast server, and the listen-live link with Copy / Open. Start / Stop is the ON AIR button. Edit the
+  station's server, mount, password and bitrate here.
+- **Stream Metadata Outputs (Settings → Broadcast):** every song that starts is sent as "Artist - Title" to your stream's
+  Icecast mount, Shoutcast, TuneIn AIR, a webhook, or an RDS encoder on a serial port. Each output shows its last result.
+- **Remote Access & Website (Settings → Broadcast):** a phone remote on this computer's Wi-Fi (now playing, Up Next, Skip,
+  Stop all, AUTO on / off, behind a 6-digit code) and now-playing data for pages on the same network.
+- **Update window → Details:** what was added and fixed in that update, for every version in between.
+- **☰ menu:** Stream Manager, EAS Logbook and Voice Tracker entries.
+
+### Fixed
+
+- **Rotation rules take effect:** STRICT / SOFT and "Max songs in a row from same category" were saved but never used.
+  SOFT rules are relaxed first; a STRICT rule is broken only as a last resort and is marked on the log and in Health.
+- **Voice tracking:** the microphone picked in Settings is used (with a message if it isn't connected), and Send to Deck
+  loads the take.
+- **Saving files:** Show+ DAW Export WAV / stems / Save session and the Play Log CSV export write the file you choose.
+- **Streaming:** a server address with its own port (for example :8443) is used as written; a failing stream says the
+  server's reason and can be stopped while it retries.
+- **EAS Logbook:** date and time boxes show local time (they shifted by the UTC offset on every save).
+- **Reloading the window keeps you signed in.** Every delete asks in Ether's own confirm window.
+- **Library / Spots / Program Log:** Scan Durations works; a failed Normalize changes nothing; audio can be attached to a
+  spot; Shows & Dayparts delete works; Show+ DAW To Deck loads the mix.
+- **Keyboard:** one shortcut list with only real keys; cart keys fire carts only while a cart wall is open; Cue Editor
+  I / N / O / U jump to the cue points.
+- **Help:** Check for Updates always answers; About shows this version's release notes.
+
 ## [4.6.69] — unreleased
 
 ### Fixed
