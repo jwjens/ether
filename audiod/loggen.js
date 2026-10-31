@@ -369,7 +369,7 @@ function _playoutChecker(db, stationId, nowTs) {
        WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND ${playsHere(db, "pl")} AND (pl.content_class IS NULL OR pl.content_class = 'MUSIC') AND pl.played_at > ? AND pl.played_at <= ?`)
       .all(stationId, nowTs - maxMin * 60, nowTs)) tl.add({ file: p.file_path, artist: p.artist, title: p.title, durationMs: p.duration_ms }, p.played_at);
   } catch {}
-  return (row) => core.breach(tl, { file: row.file_path || row.file_key, title: row.song_title || row.title, artist: row.song_artist || row.artist, durationMs: row.duration_ms, noRepeatHours: row.no_repeat_hours }, nowTs, rules);
+  return (row) => core.breach(tl, { file: row.file_path || row.file_key, title: row.song_title || row.title, artist: row.song_artist || row.artist, durationMs: row.duration_ms, noRepeatHours: row.no_repeat_hours }, nowTs, rules, true);   // STRICT rules only on air: a SOFT rule may have been relaxed when the row was placed (5b)
 }
 
 // ── Log-Reader Flip Phase 3 (ACTIVATION): the time-anchored read-through fill (§2.3 + §2.7) ────────────

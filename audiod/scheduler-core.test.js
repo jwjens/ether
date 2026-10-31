@@ -124,3 +124,39 @@ describe("nothing passes → least recently played (Jeff, 2026-10-19)", () => {
     expect(core.leastRecent([], T0, new core.Timeline(), RULES).song).toBe(null);
   });
 });
+
+// ── STRICT / SOFT and max in a row (dead-controls item 36; Jeff's 5b and 6c, 2026-10-30) ──────────────────────────
+describe("STRICT / SOFT: SOFT rules are relaxed first, STRICT holds", () => {
+  const SOFT_ARTIST = { songMin: 120, artistMin: 60, titleMin: 120, hard: { song: true, artist: false, title: true } };
+  it("with strictOnly, a SOFT rule doesn't block; a STRICT one still does", () => {
+    const a = song(1, { artist: "Same" }), b = song(2, { artist: "Same" });
+    const tl = tlWith([song(9, { artist: "Same" }), T0 - 10 * MIN], [b, T0 - 30 * MIN]);
+    expect(core.pick([a], T0, tl, SOFT_ARTIST).song).toBe(null);                                   // all rules: blocked by artist
+    expect(core.pick([a], T0, tl, SOFT_ARTIST, Math.random, { strictOnly: true }).song.id).toBe(1); // SOFT artist relaxed
+    expect(core.pick([b], T0, tl, SOFT_ARTIST, Math.random, { strictOnly: true }).song).toBe(null); // STRICT song rule holds
+    expect(core.breach(tl, a, T0, SOFT_ARTIST).rule).toBe("artist");                                // the row can say what bent
+  });
+  it("a rule with no STRICT/SOFT setting is STRICT", () => {
+    const a = song(1, { artist: "Same" });
+    const tl = tlWith([song(9, { artist: "Same" }), T0 - 10 * MIN]);
+    expect(core.pick([a], T0, tl, RULES, Math.random, { strictOnly: true }).song).toBe(null);
+  });
+});
+
+describe("the station's rules from the database", () => {
+  const db = (rows) => ({ prepare: () => ({ all: () => rows }) });
+  it("reads STRICT/SOFT per rule and max in a row", () => {
+    const r = core.stationRules(db([
+      { rule_type: "song_separation_min", value: 180, is_hard: 1 }, { rule_type: "artist_separation_min", value: 60, is_hard: 0 },
+      { rule_type: "max_same_category", value: 3, is_hard: 1 },
+    ]), 1);
+    expect(r).toMatchObject({ songMin: 180, artistMin: 60, hard: { song: true, artist: false }, maxRow: { n: 3, hard: true } });
+  });
+  it("max in a row: one too many from the same category", () => {
+    const rules = { maxRow: { n: 3, hard: true } };
+    expect(core.overMaxRow({ cat: 5, n: 3 }, 5, rules)).toBe(true);
+    expect(core.overMaxRow({ cat: 5, n: 2 }, 5, rules)).toBe(false);
+    expect(core.overMaxRow({ cat: 5, n: 3 }, 6, rules)).toBe(false);
+    expect(core.overMaxRow({ cat: 5, n: 9 }, 5, { maxRow: null })).toBe(false);
+  });
+});

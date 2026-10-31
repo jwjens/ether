@@ -2776,7 +2776,6 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     artist_separation_min: { label: "Same artist plays again after", hint: "Minutes before you hear the same artist twice" },
     song_separation_min:   { label: "Same song plays again after", hint: "Minutes before the exact same song can repeat" },
     title_separation_min:  { label: "Same title (different artist) after", hint: "Covers or remixes of the same song" },
-    max_same_gender:       { label: "Max songs in a row by same gender", hint: "Keeps the mix balanced between male and female artists" },
     max_same_category:     { label: "Max songs in a row from same category", hint: "Prevents playing too many songs from one rotation category" },
   };
 
@@ -2842,7 +2841,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
     // Rules
     // station_id scoping: Strategy B — single table
-    queryScoped<any>("SELECT * FROM separation_rules ORDER BY id", [], stationId).then(setRules).catch(() => {});
+    queryScoped<any>("SELECT * FROM separation_rules WHERE deleted_at IS NULL ORDER BY id", [], stationId).then(setRules).catch(() => {});
 
     // Audio devices
     loadDevices();
@@ -3320,8 +3319,9 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           })}
         </div>
         <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--bg-tertiary)", borderRadius: 0, fontSize: 13, color: "var(--text-tertiary)" }}>
-          <strong style={{ color: "var(--accent-red)" }}>STRICT</strong> — rule is enforced absolutely, no exceptions.&nbsp;&nbsp;
-          <strong style={{ color: "var(--text-secondary)" }}>SOFT</strong> — rule is preferred but can be broken if no better option exists.
+          <strong style={{ color: "var(--text-secondary)" }}>SOFT</strong> — relaxed first when no song can meet every rule; the log row says which rule was bent.&nbsp;&nbsp;
+          <strong style={{ color: "var(--accent-red)" }}>STRICT</strong> — kept; broken only as the last resort when no song can meet it, and that is marked on the log and in Health.
+          For <b>Max songs in a row</b>, STRICT moves the slot to the next different category in the clock; SOFT keeps the category and marks the rule broken.
         </div>
       </Section>
 

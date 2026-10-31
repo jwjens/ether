@@ -92,10 +92,13 @@ class Timeline {
   lastBefore(file, ts) { return Timeline._near(this.rec.get(recordingKey(file)), ts)[0]; }
 }
 
-/** The first rule this song breaks at ts (either side), or null. rules: {songMin, artistMin, titleMin} (null = off). */
-function breach(tl, song, ts, rules) {
+/** The first rule this song breaks at ts (either side), or null. rules: {songMin, artistMin, titleMin} (null = off).
+ *  strictOnly: SOFT rules are not checked (Jeff's 5b, 2026-10-30: SOFT rules are relaxed first; STRICT holds). A rule
+ *  with no STRICT/SOFT setting is STRICT. Per-song no-repeat hours have no setting and always hold. */
+function breach(tl, song, ts, rules, strictOnly = false) {
+  const soft = (rule) => strictOnly && rules.hard && rules.hard[rule] === false;
   const chk = (rule, min, arr, key) => {
-    if (min == null || !key) return null;
+    if (min == null || !key || soft(rule)) return null;
     const lim = min * 60;
     const [b, a] = Timeline._near(arr, ts);
     if (b != null && ts - b < lim) return { rule, key, settingMin: min, measuredMin: +((ts - b) / 60).toFixed(1), side: "before" };
@@ -128,8 +131,9 @@ function breach(tl, song, ts, rules) {
 function pick(pool, ts, tl, rules, rand = Math.random, opts = null) {
   let best = Infinity; const ties = []; const blocked = [];
   const spoken = opts && opts.spokenFor;
+  const strictOnly = !!(opts && opts.strictOnly);
   for (const s of pool) {
-    const b = breach(tl, s, ts, rules);
+    const b = breach(tl, s, ts, rules, strictOnly);
     if (b) { blocked.push({ s, b }); continue; }
     const last = tl.lastBefore(s.file, ts);
     let w = last == null ? -Infinity : last;
@@ -170,17 +174,36 @@ function leastRecent(pool, ts, tl, rules, rand = Math.random, opts = null) {
 
 // ── what the database says (read once per run; never writes) ──────────────────────────────────────────────────────
 /** The station's rules from Programming preferences: active rows only. Inactive or missing = off. */
+// STRICT / SOFT (is_hard) and "Max songs in a row from same category" are read here (dead-controls item 36; Jeff's
+// 5b and 6c, 2026-10-30). hard[rule] = false means SOFT. maxRow = { n, hard } or null when off.
 function stationRules(db, stationId) {
-  const r = { songMin: null, artistMin: null, titleMin: null };
+  const r = { songMin: null, artistMin: null, titleMin: null, hard: { song: true, artist: true, title: true }, maxRow: null };
+  const isHard = (x) => x.is_hard == null ? true : Number(x.is_hard) === 1;
   try {
-    for (const x of db.prepare("SELECT rule_type, value FROM separation_rules WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(stationId)) {
+    for (const x of db.prepare("SELECT rule_type, value, is_hard FROM separation_rules WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(stationId)) {
       const v = Number(x.value); if (!Number.isFinite(v) || v <= 0) continue;
-      if (x.rule_type === "song_separation_min") r.songMin = v;
-      if (x.rule_type === "artist_separation_min") r.artistMin = v;
-      if (x.rule_type === "title_separation_min") r.titleMin = v;
+      if (x.rule_type === "song_separation_min") { r.songMin = v; r.hard.song = isHard(x); }
+      if (x.rule_type === "artist_separation_min") { r.artistMin = v; r.hard.artist = isHard(x); }
+      if (x.rule_type === "title_separation_min") { r.titleMin = v; r.hard.title = isHard(x); }
+      if (x.rule_type === "max_same_category") r.maxRow = { n: Math.floor(v), hard: isHard(x) };
     }
-  } catch { /* no table: every rule off */ }
+  } catch {
+    // An older table without is_hard: the separations alone, every one STRICT.
+    try {
+      for (const x of db.prepare("SELECT rule_type, value FROM separation_rules WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(stationId)) {
+        const v = Number(x.value); if (!Number.isFinite(v) || v <= 0) continue;
+        if (x.rule_type === "song_separation_min") r.songMin = v;
+        if (x.rule_type === "artist_separation_min") r.artistMin = v;
+        if (x.rule_type === "title_separation_min") r.titleMin = v;
+      }
+    } catch { /* no table: every rule off */ }
+  }
   return r;
+}
+
+/** 6c: would placing one more song of `categoryId` exceed max-in-a-row? run = { cat, n } (consecutive songs so far). */
+function overMaxRow(run, categoryId, rules) {
+  return !!(rules.maxRow && run && run.cat != null && run.cat === categoryId && run.n >= rules.maxRow.n);
 }
 
 /** The slot category's pool at an hour: in rotation, MUSIC, not deleted, with a file, daypart allows the hour (D3). */
@@ -293,4 +316,4 @@ function commit(tl, song, ts) { tl.add({ file: song.file, artist: song.artist, t
 /** Take a placement back (the inverse of commit). */
 function uncommit(tl, song, ts) { tl.remove({ file: song.file, artist: song.artist, title: song.title, durationMs: song.duration_ms ?? song.durationMs }, ts); }
 
-module.exports = { pick, leastRecent, titleKey, breach, commit, uncommit, pieceEndFn, Timeline, loadTimeline, poolFor, stationRules, fallbackCategory, recordingKey, normaliseTitle, makeSplitter, DEFAULT_DELIMITERS };
+module.exports = { pick, leastRecent, overMaxRow, titleKey, breach, commit, uncommit, pieceEndFn, Timeline, loadTimeline, poolFor, stationRules, fallbackCategory, recordingKey, normaliseTitle, makeSplitter, DEFAULT_DELIMITERS };

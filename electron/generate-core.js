@@ -108,6 +108,7 @@ function _buildScheduleCtx(db, stationId) {
     tl: null, replace: null, poolCache: new Map(),
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [],
     relaxed: [],                 // slots where no song passed and the least recently played song went in (Jeff, 2026-10-19)
+    musicRun: { cat: null, n: 0 },  // consecutive songs from one category so far this run (max in a row, 6c)
     unscheduled: [],             // { hour, ts, category_id, categoryCode, closest[] } — every slot no song could fill
     // A break that started more than the break tolerance from its minute (§3.7, 3c): visible, never fitted.
     breakDrift: [],
@@ -139,14 +140,28 @@ function _pool(ctx, categoryId, hour) {
   }
   return ctx.poolCache.get(k);
 }
-/** THE ONE PICK for a music slot, then the station's fallback category if one is named. null = UNSCHEDULED. */
+/** THE ONE PICK for a music slot, then the station's fallback category if one is named. null = UNSCHEDULED.
+ *  Order (Jeff's 5b, 2026-10-30): every rule (slot category, then fallback) -> SOFT rules relaxed (slot, then fallback;
+ *  the row says which SOFT rule it bends) -> the least recently played song, which breaks a STRICT rule as the last
+ *  resort and is marked on the row and in Health (ctx.relaxed). */
 function _pickMusic(ctx, categoryId, ts, hour) {
   const tl = _timeline(ctx, Math.floor(Date.now() / 1000));
   let r = ctx.core.pick(_pool(ctx, categoryId, hour), ts, tl, ctx.rules);
-  let usedCat = categoryId, viaFallback = false;
+  let usedCat = categoryId, viaFallback = false, softBent = null;
   if (!r.song && ctx.fallbackCat && ctx.fallbackCat !== categoryId) {
     const r2 = ctx.core.pick(_pool(ctx, ctx.fallbackCat, hour), ts, tl, ctx.rules);
     if (r2.song) { r = r2; usedCat = ctx.fallbackCat; viaFallback = true; }
+  }
+  const hasSoft = !!ctx.rules.hard && Object.keys(ctx.rules.hard).some(k => ctx.rules.hard[k] === false);
+  if (!r.song && hasSoft) {
+    const tries = [categoryId].concat(ctx.fallbackCat && ctx.fallbackCat !== categoryId ? [ctx.fallbackCat] : []);
+    for (const cat of tries) {
+      const r3 = ctx.core.pick(_pool(ctx, cat, hour), ts, tl, ctx.rules, Math.random, { strictOnly: true });
+      if (r3.song) {
+        softBent = ctx.core.breach(tl, r3.song, ts, ctx.rules) || null;   // the SOFT rule this song bends
+        r = { ...r3, closest: r.closest }; usedCat = cat; viaFallback = cat !== categoryId; break;
+      }
+    }
   }
   // NOTHING PASSES → the slot category's least recently played song (Jeff, 2026-10-19: "its or least recently played").
   // The row says which rule it breaks. UNSCHEDULED only when the category has no song at all.
@@ -160,7 +175,11 @@ function _pickMusic(ctx, categoryId, ts, hour) {
     }
   }
   if (r.song) ctx.core.commit(tl, r.song, ts);
-  return { ...r, categoryId: usedCat, viaFallback, leastRecent };
+  return { ...r, categoryId: usedCat, viaFallback, leastRecent, softBent };
+}
+/** The clock's music categories after position i, in clock order, wrapping round (6c: the next different category). */
+function _catsAfter(list, i) {
+  return list.slice(i + 1).concat(list.slice(0, i)).filter(s => s.slot_type === 'music' && s.category_id && !s.song_id).map(s => s.category_id);
 }
 function _catCode(ctx, id) { try { const c = ctx.stmtCatCode.get(id); return c ? (c.code || c.name || ('#' + id)) : ('#' + id); } catch { return '#' + id; } }
 function _musicRow(ctx, r, slotCat, ts, durationS, clockId) {
@@ -168,9 +187,13 @@ function _musicRow(ctx, r, slotCat, ts, durationS, clockId) {
   return {
     scheduled_at: ts, song_id: s.id, title: s.title, artist: s.artist || '', file_key: s.file_path ? storedBasename(s.file_path) : (s.file || ''),
     duration_s: durationS, category_id: r.categoryId, clock_id: clockId,
-    pick_reason: JSON.stringify(r.leastRecent
-      ? { m: 'least-recent', cat: r.categoryId, slotCat, lastAired: r.lastAired, ties: r.ties, broke: r.broke || null }
-      : { m: 'one-pick', cat: r.categoryId, slotCat, lastAired: r.lastAired, passing: r.passing, ties: r.ties, fallback: r.viaFallback || undefined }),
+    pick_reason: JSON.stringify({
+      ...(r.leastRecent
+        ? { m: 'least-recent', cat: r.categoryId, slotCat, lastAired: r.lastAired, ties: r.ties, broke: r.broke || null }
+        : { m: 'one-pick', cat: r.categoryId, slotCat, lastAired: r.lastAired, passing: r.passing, ties: r.ties, fallback: r.viaFallback || undefined }),
+      ...(r.softBent ? { soft: r.softBent } : {}),          // a SOFT rule relaxed for this song (5b)
+      ...(r.maxRow ? { maxRow: r.maxRow } : {}),            // max in a row: moved to the next category, or broken (6c)
+    }),
   };
 }
 function _unscheduledRow(ctx, r, slotCat, ts, durationS, clockId, hour) {
@@ -249,9 +272,28 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     try {
 
     // One music slot, by the one pick: a song, or an UNSCHEDULED row. Moves currentTs to where the next row starts.
-    const placeMusic = (categoryId, defaultDurS) => {
+    // MAX SONGS IN A ROW (Jeff's 6c, 2026-10-30): when this slot would make one too many from the same category: STRICT
+    // takes the slot from the next different category in the clock; SOFT keeps the category and the row says the rule was
+    // broken. A STRICT rule that still can't be met (no other category, or it has no song) follows 5b: broken as the last
+    // resort, marked on the row and in Health.
+    const placeMusic = (categoryId, defaultDurS, nextCats = []) => {
       const ts = startFor('MUSIC');
-      const r = _pickMusic(ctx, categoryId, ts, h);
+      let r = null, maxRow = null;
+      if (ctx.core.overMaxRow(ctx.musicRun, categoryId, ctx.rules)) {
+        const mr = ctx.rules.maxRow;
+        const alt = mr.hard ? nextCats.find(c => c && c !== categoryId) : null;
+        if (alt != null) {
+          const r2 = _pickMusic(ctx, alt, ts, h);
+          if (r2.song) { r = r2; maxRow = { moved: true, from: categoryId, to: alt, max: mr.n, strict: true }; }
+        }
+        if (!r) {
+          maxRow = { broken: true, max: mr.n, strict: !!mr.hard, inRow: ctx.musicRun.n + 1 };
+          if (mr.hard) ctx.relaxed.push({ hour: h, ts, category_id: categoryId, title: '', artist: '', broke: { rule: 'max-in-a-row', max: mr.n, strict: true } });
+        }
+      }
+      if (!r) r = _pickMusic(ctx, categoryId, ts, h);
+      if (maxRow) r = { ...r, maxRow };
+      if (r.song) ctx.musicRun = ctx.musicRun.cat === r.categoryId ? { cat: r.categoryId, n: ctx.musicRun.n + 1 } : { cat: r.categoryId, n: 1 };
       if (r.song && ts >= hourEnd) pastEnd.push({ song: r.song, ts });
       if (r.song) {
         const d = r.song.duration_ms ? Math.round(r.song.duration_ms / 1000) : defaultDurS;
@@ -301,11 +343,12 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         const driftSec = startTs - target;
         if (Math.abs(driftSec) > TOL_S) ctx.breakDrift.push({ hour: h, minute: brk.minute || 0, driftSec, direction: driftSec > 0 ? 'over' : 'under' });
       };
-      for (const ms of musicSlots) {
+      for (let mi = 0; mi < musicSlots.length; mi++) {
+        const ms = musicSlots[mi];
         await _genMaybeYield();
         if (skipMusic > 0) { skipMusic--; continue; }   // a clock position that already happened (rule 4)
         while (bi < due.length && currentTs >= due[bi].target) placeBreak(due[bi++]);
-        placeMusic(ms.category_id, (ms.duration_min || 4) * 60);
+        placeMusic(ms.category_id, (ms.duration_min || 4) * 60, _catsAfter(musicSlots, mi));
       }
       // A break goes where the clock puts it — after the row that reaches its minute — and nowhere else (Jeff, 2026-10-19:
       // "Remove the break re-placement. Every clock is generated as a full hour"). One whose minute the clock's rows never
@@ -314,7 +357,8 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
       continue;
     }
 
-    for (const slot of slots) {
+    for (let si = 0; si < slots.length; si++) {
+      const slot = slots[si];
       await _genMaybeYield();                // keep main's message pump alive mid-hour
       if (skipMusic > 0) {                   // a clock position that already happened on the piece on air (rule 4)
         if (slot.song_id || (slot.slot_type === 'music' && slot.category_id)) skipMusic--;
@@ -342,7 +386,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         continue;
       }
       if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
-      placeMusic(slot.category_id, slotDurationS);
+      placeMusic(slot.category_id, slotDurationS, _catsAfter(slots, si));
     }
 
     } finally {
