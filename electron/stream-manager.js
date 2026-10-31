@@ -19,7 +19,7 @@ function statusOf(src) {
                   : src.startTime ? Math.floor((Date.now() - src.startTime) / 1000) : null;
   return {
     state: ["idle", "connecting", "live", "error"].includes(state) ? state : "idle",
-    errorMsg: src.errorMsg || null,
+    errorMsg: state === "idle" ? null : (src.errorMsg || null),   // a stopped stream has no error to show
     uptimeSec: state === "live" ? uptimeSec : null,
     bitrateKbps: src.bitrate != null ? src.bitrate : null,
   };

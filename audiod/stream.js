@@ -37,6 +37,17 @@ function parseLine(line) {
   };
 }
 
+// THE REAL REASON AFTER REPEATED FAILURES (Jeff, 2026-10-31, HalloVeen check): the cooldown message used to replace the
+// reason the server gave (e.g. "Forbidden (403)" when another computer holds the mount) with a generic "check URL and
+// credentials". The message now keeps that reason and says what Ether does next. Shared by the in-process path (main.js).
+function repeatedFailureMsg(reason) {
+  const why = reason === "Forbidden (403)" ? "The server refused the stream (403): another computer may be sending to this mount, or the password is wrong"
+    : reason === "Auth failed (401)" ? "The server refused the password (401)"
+    : reason ? reason
+    : "The stream could not connect";
+  return `${why}. Ether tries again every 30 seconds; press Stop to end it.`;
+}
+
 // THE SAVED PASSWORD ON EVERY (RE)CONNECT (Jeff, 2026-10-13, C; docs/air-machine-stalls-plan-2026-10-13.md §6). A running
 // encoder used to keep the password it started with, so after the server's password changed the next automatic
 // reconnect used the OLD one and the station dropped. Every spawn now re-reads the station's saved password: change it in
@@ -132,7 +143,7 @@ class StreamSupervisor {
         // successful connect emits "live" (errorMsg=null), which clears the sticky banner. (Previously:
         // armed=false + return → no recovery event could ever fire, so the banner stuck forever.)
         this.failureCount = 0; this.firstFailureTime = 0; this.statusState = "error";
-        this.errorMsg = "Streaming failed after repeated ffmpeg restarts. Check Icecast server URL and credentials.";
+        this.errorMsg = repeatedFailureMsg(this.errorMsg);
         this._emit();
         setTimeout(() => { if (this.armed) this._spawn(this.getPort()); }, 30000);
         return;
@@ -143,7 +154,7 @@ class StreamSupervisor {
   }
 
   _kill() { if (this.proc) { try { this.proc.kill("SIGTERM"); } catch {} this.proc = null; } }
-  stop() { this.armed = false; this.failureCount = 0; this._kill(); this.statusState = "idle"; this.speed = null; this.bitrate = null; this._emit(); return { ok: true }; }
+  stop() { this.armed = false; this.failureCount = 0; this._kill(); this.statusState = "idle"; this.errorMsg = null; this.speed = null; this.bitrate = null; this._emit(); return { ok: true }; }
 }
 
-module.exports = { StreamSupervisor, withPassword };
+module.exports = { StreamSupervisor, withPassword, repeatedFailureMsg };

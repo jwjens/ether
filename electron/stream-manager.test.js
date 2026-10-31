@@ -68,3 +68,23 @@ describe("one real stream, two doors", () => {
     expect(ui).not.toMatch(/stream_settings/);
   });
 });
+
+describe("a failing stream says why and can be stopped (HalloVeen check, 2026-10-31)", () => {
+  const { repeatedFailureMsg } = require_("../audiod/stream");
+  it("after repeated failures the server's reason is kept, with what Ether does next", () => {
+    expect(repeatedFailureMsg("Forbidden (403)")).toMatch(/^The server refused the stream \(403\): another computer may be sending to this mount/);
+    expect(repeatedFailureMsg("Connection refused")).toBe("Connection refused. Ether tries again every 30 seconds; press Stop to end it.");
+    expect(repeatedFailureMsg(null)).toMatch(/^The stream could not connect\./);
+    const both = read("electron/main.js") + read("audiod/stream.js");
+    expect(both).not.toMatch(/Streaming failed after repeated ffmpeg restarts/);
+  });
+  it("a stopped stream shows no error; Stop is offered in ERROR (Ether keeps retrying until Stop)", () => {
+    expect(SM.statusOf({ statusState: "idle", errorMsg: "old" }).errorMsg).toBe(null);
+    expect(read("src/components/StreamManager.tsx")).toMatch(/const running = status\.state !== "idle";/);
+  });
+  it("the daemon's stop clears the error", () => {
+    const { StreamSupervisor } = require_("../audiod/stream");
+    const s = Object.create(StreamSupervisor.prototype); s._emit = () => {}; s.errorMsg = "x"; s.proc = null;
+    s.stop(); expect(s.errorMsg).toBe(null); expect(s.statusState).toBe("idle");
+  });
+});

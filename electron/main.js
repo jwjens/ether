@@ -13496,7 +13496,7 @@ function _spawnStream(stationId, args, label) {
       state.failureCount = 0;
       state.firstFailureTime = 0;
       state.statusState  = 'error';
-      state.errorMsg     = 'Streaming failed after repeated ffmpeg restarts. Check Icecast server URL and credentials.';
+      state.errorMsg     = require('../audiod/stream').repeatedFailureMsg(state.errorMsg);
       _emitDestStatus(`icecast:${stationId}`, state);
       _emitGlobal();
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -13589,6 +13589,7 @@ async function streamStopLive(args = {}) {
   const state     = _getStreamState(stationId);
   state.armed = false;
   state.failureCount = 0;
+  state.errorMsg = null;   // a stopped stream has no error to show
   _streamKillCurrent(stationId);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('stream:status', { stationId, live: false });

@@ -43,6 +43,9 @@ It shows:
 
 - Saved settings are used the next time the stream starts. If it is on air, stop and start it to switch over.
 - Ether sends to port 8000 on your server.
+- If the stream keeps failing, the status says ERROR with the server's own reason (for example "The server refused the
+  stream (403): another computer may be sending to this mount, or the password is wrong"). Ether tries again every 30
+  seconds until you press **⏹ Stop streaming**.
 - If the listener count can't be read (the server doesn't answer, or its status page is off), Stream Manager says so
   and shows "unknown". It never guesses. "mount not on server" means the server has no stream on that mount right now.
 - Song titles sent to Icecast are set up in Stream Metadata Outputs, not here.

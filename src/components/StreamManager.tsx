@@ -92,7 +92,8 @@ export default function StreamManager() {
   if (!status) return <div style={{ padding: 20, color: "var(--text-tertiary)" }}>Loading…</div>;
   if (!status.settings || !edit) return <div style={{ padding: 20, color: "var(--text-tertiary)" }}>No active station. Pick a station first; Stream Manager shows that station's stream.</div>;
   const st = status.settings;
-  const running = status.state === "live" || status.state === "connecting";
+  // Stop is offered whenever the stream is not stopped — including ERROR, where Ether keeps retrying until Stop.
+  const running = status.state !== "idle";
 
   return (
     <div style={{ maxWidth: 600 }}>
