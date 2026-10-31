@@ -19,6 +19,7 @@ import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 import { bindLocalMedia, localAudio } from "../audio/localOutput";
 import { dispatchCrossWindow } from "../lib/crossWindowEvent";
 import { guestSlot, guestLevelFrom, GUEST_LEVEL_EVERY_MS } from "../lib/guestLevel";
+import { pruneClipWindow, clipParts } from "../lib/clipBuffer";
 
 const invoke = (cmd: string, args?: any): Promise<any> =>
   (window as any).ether.invoke(cmd, args);
@@ -253,6 +254,11 @@ function useScreenShare() {
 
 function useClipBuffer(stream: MediaStream | null, seconds = 30) {
   const chunksRef = useRef<{ data: ArrayBuffer; ts: number }[]>([]);
+  // THE FILE'S HEADER (dead-controls item 5): a WebM recording's FIRST chunk carries the EBML header and the track
+  // description; every later chunk is only media clusters. The 30 s window used to prune it after 30 s, so every clip
+  // saved after the first 30 s had no header and would not play. It is kept for the life of the recorder and written
+  // first (src/lib/clipBuffer.ts); players resync on the next cluster after it.
+  const headerRef = useRef<ArrayBuffer | null>(null);
   const recRef    = useRef<MediaRecorder | null>(null);
 
   useEffect(() => {
@@ -260,21 +266,21 @@ function useClipBuffer(stream: MediaStream | null, seconds = 30) {
     if (!MediaRecorder.isTypeSupported("video/webm")) return;
     const mr = new MediaRecorder(stream, { mimeType: "video/webm" });
     recRef.current = mr;
+    headerRef.current = null; chunksRef.current = [];
     mr.ondataavailable = async (e) => {
       if (e.data.size === 0) return;
       const now = Date.now();
-      chunksRef.current.push({ data: await e.data.arrayBuffer(), ts: now });
-      // Prune chunks older than window
-      const cutoff = now - seconds * 1000;
-      chunksRef.current = chunksRef.current.filter(c => c.ts >= cutoff);
+      const data = await e.data.arrayBuffer();
+      if (!headerRef.current) { headerRef.current = data; return; }   // the header chunk is kept, never pruned
+      chunksRef.current = pruneClipWindow([...chunksRef.current, { data, ts: now }], now, seconds);
     };
     mr.start(1000);
     return () => { try { mr.stop(); } catch {} recRef.current = null; };
   }, [stream, seconds]);
 
   const saveClip = useCallback(async () => {
-    if (chunksRef.current.length === 0) return;
-    const blobs = chunksRef.current.map(c => new Uint8Array(c.data));
+    if (!headerRef.current) return;
+    const blobs = clipParts(headerRef.current, chunksRef.current).map(b => new Uint8Array(b));
     const blob = new Blob(blobs, { type: "video/webm" });
     const buf = await blob.arrayBuffer();
     const defaultPath = `clip-${new Date().toISOString().replace(/[:.]/g,"-")}.webm`;
