@@ -18,6 +18,7 @@
 
 import { etherConfirm } from "../lib/etherConfirm";
 import { useEffect, useState, useMemo } from "react";
+import { toLocalInput } from "../lib/localDateTime";
 import { query, execute } from "../db/client";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -319,7 +320,7 @@ function SummaryCard({ label, value, target, status, hint }: { label: string; va
 // ── Sub: entry add/edit form ──
 function EntryForm({ editingId, stationId, onClose, onSaved }: { editingId: number | null; stationId: number; onClose: () => void; onSaved: () => void }) {
   const isEdit = editingId !== null;
-  const [occurredAt, setOccurredAt]    = useState<string>(() => new Date().toISOString().slice(0, 16));
+  const [occurredAt, setOccurredAt]    = useState<string>(() => toLocalInput(Date.now()));
   const [alertCode, setAlertCode]      = useState("RWT");
   const [direction, setDirection]      = useState<"received" | "transmitted" | "both">("received");
   const [originator, setOriginator]    = useState("EAS");
@@ -337,14 +338,14 @@ function EntryForm({ editingId, stationId, onClose, onSaved }: { editingId: numb
       const r = await query<EasEntry>("SELECT * FROM eas_tests WHERE id = ? AND station_id = ?", [editingId!, stationId]);
       if (r[0]) {
         const e = r[0];
-        setOccurredAt(new Date(e.occurred_at * 1000).toISOString().slice(0, 16));
+        setOccurredAt(toLocalInput(e.occurred_at * 1000));
         setAlertCode(e.alert_code);
         setDirection(e.direction);
         setOriginator(e.originator);
         setSenderId(e.sender_id);
         setReceivedFrom(e.received_from);
         setRetransmitted(!!e.retransmitted);
-        setRetransmittedAt(e.retransmitted_at ? new Date(e.retransmitted_at * 1000).toISOString().slice(0, 16) : "");
+        setRetransmittedAt(e.retransmitted_at ? toLocalInput(e.retransmitted_at * 1000) : "");
         setOperatorInitials(e.operator_initials);
         setNotes(e.notes);
       }
