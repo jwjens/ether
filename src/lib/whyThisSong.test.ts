@@ -31,3 +31,22 @@ describe("Why this song (audit 18)", () => {
     expect(ra).toMatch(/ether:open-programlog/);
   });
 });
+
+describe("Why this song reads the one pick's marks (Jeff, 2026-10-31)", () => {
+  const names: Record<number, string> = { 4: "Gold", 7: "Recurrent" };
+  const nameOf = (id: number) => names[id] ?? null;
+  it("a normal pick, a SOFT rule relaxed, and a STRICT max-in-a-row move", () => {
+    expect(renderReason({ m: "one-pick", cat: 4, slotCat: 4, passing: 33, ties: 1 }, "Gold", nameOf))
+      .toBe("Gold: the song that waited longest of 33 that met every rule");
+    expect(renderReason({ m: "one-pick", cat: 4, slotCat: 4, passing: 5, ties: 1, soft: { rule: "artist", settingMin: 60, measuredMin: 42 } }, "Gold", nameOf))
+      .toMatch(/SOFT rule relaxed: same artist \(42 of 60 min\)/);
+    expect(renderReason({ m: "one-pick", cat: 7, slotCat: 4, passing: 9, ties: 1, maxRow: { moved: true, from: 4, to: 7, max: 3, strict: true } }, "Recurrent", nameOf))
+      .toMatch(/max 3 in a row \(STRICT\): moved from Gold to Recurrent/);
+  });
+  it("a STRICT rule broken as the last resort, and a SOFT max-in-a-row broken", () => {
+    expect(renderReason({ m: "least-recent", cat: 4, broke: { rule: "song", settingMin: 120, measuredMin: 80 } }, "Gold", nameOf))
+      .toBe("Gold: no song met the rules, so the least recently played song went in · STRICT rule broken as the last resort: same song (80 of 120 min)");
+    expect(renderReason({ m: "one-pick", cat: 4, slotCat: 4, passing: 30, ties: 1, maxRow: { broken: true, max: 3, strict: false, inRow: 4 } }, "Gold", nameOf))
+      .toMatch(/max 3 in a row \(SOFT\) broken — 4 in a row/);
+  });
+});

@@ -201,12 +201,42 @@ function explainRow(db, stationId, rowId) {
     // Honest about absence: a row generated before pick_reason existed has no reason and cannot get
     // one — the losing candidates are gone. Say so rather than inventing a plausible sentence.
     reasonAvailable: !!parsed,
-    reasonText: parsed ? renderReason(parsed, r.category) : null,
+    reasonText: parsed ? renderReason(parsed, r.category, (id) => {
+      try { const c = db.prepare("SELECT COALESCE(name, code) n FROM categories WHERE id = ?").get(id); return c ? c.n : null; } catch { return null; }
+    }) : null,
   };
 }
 
-function renderReason(p, categoryName) {
+// "Why this song" (Program Log). Two formats: the one pick's (m: one-pick / least-recent / unscheduled, with soft / maxRow
+// marks — Jeff's 5b/6c, 2026-10-30) and the older goal-mode rows (pool / veto / relax). Every mark the row carries is said;
+// nothing is invented. nameOf(categoryId) names other categories (fallback, max-in-a-row moves).
+const RULE_WORD = { song: "same song", artist: "same artist", title: "same title", "no-repeat-hours": "the song's no-repeat hours", "max-in-a-row": "max in a row" };
+function brokeText(b) {
+  if (!b) return "";
+  if (b.rule === "max-in-a-row") return `max ${b.max} in a row`;
+  const w = RULE_WORD[b.rule] || b.rule;
+  return b.settingMin != null && b.measuredMin != null ? `${w} (${b.measuredMin} of ${b.settingMin} min)` : w;
+}
+function renderReason(p, categoryName, nameOf = () => null) {
   const cat = categoryName || ("category " + p.cat);
+  const nm = (id) => nameOf(id) || ("category " + id);
+  if (p.m === "one-pick" || p.m === "least-recent" || p.m === "unscheduled") {
+    const bits = [];
+    if (p.m === "one-pick") {
+      bits.push(`${cat}: the song that waited longest of ${p.passing ?? "?"} that met every rule${p.ties > 1 ? ` (picked from ${p.ties} tied)` : ""}`);
+      if (p.fallback) bits.push(`from the station's fallback category (nothing in ${nm(p.slotCat)} met the rules)`);
+    } else if (p.m === "least-recent") {
+      bits.push(`${cat}: no song met the rules, so the least recently played song went in`);
+      if (p.broke) bits.push(`STRICT rule broken as the last resort: ${brokeText(p.broke)}`);
+    } else {
+      bits.push(`UNSCHEDULED: ${cat} has no song that could go here`);
+    }
+    if (p.soft) bits.push(`SOFT rule relaxed: ${brokeText(p.soft)}`);
+    if (p.maxRow && p.maxRow.moved) bits.push(`max ${p.maxRow.max} in a row (STRICT): moved from ${nm(p.maxRow.from)} to ${nm(p.maxRow.to)}`);
+    if (p.maxRow && p.maxRow.broken) bits.push(`max ${p.maxRow.max} in a row ${p.maxRow.strict ? "(STRICT) broken as the last resort" : "(SOFT) broken"}${p.maxRow.inRow ? ` — ${p.maxRow.inRow} in a row` : ""}`);
+    return bits.join(" · ");
+  }
+  // Older rows (goal mode).
   const vetoed = p.veto ? Object.entries(p.veto).filter(([, n]) => n > 0) : [];
   const bits = [];
   bits.push(`${cat}: chosen from a pool of ${p.pool}`);
