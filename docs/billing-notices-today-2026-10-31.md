@@ -44,3 +44,27 @@ Signup AccountView.tsx:53,59,55,61,95-110 · backend entitlement.js:29-31, entit
 stripe-webhook.js:46-50,64-173, index.js:2565-2566,2639-2660,3958-3997,4326-4328,4380,5321-5324, plans.json:5,48,50-55 ·
 desktop TrialGate.tsx:20-80 (mounted App.tsx ~2810), OnboardingFlow.tsx:441-446, licenseGuard.ts:14,128,164,
 SubscriptionPanel.tsx:13-16,84-98 · dashboard AccountInfo.tsx:176-183, api.ts:303,306 · admin LicensesView.tsx:7,21.
+
+## Built (2026-10-31) and the test accounts
+
+Built: backend b5a7106, 7c65939, b490d1c, 0ccd0e5, a658e4a · dashboard 886211b · account site 142be51 · desktop 2ab3c80
+(the banner replaces the blocking trial overlay). Billing emails are OFF until `BILLING_EMAILS=1`. Nothing deployed.
+Screenshots of every notice on every surface: https://claude.ai/artifact/MQwvcRC1jUeYSxsRRYCZTf
+
+**Test accounts** — only on the LOCAL test server (`cd C:\ether-backend; node scripts/billing-test-server.js`, in-memory,
+http://127.0.0.1:8787). They exist only while it runs and never touch production; password `ether-test-1` for all.
+Not deleted — waiting for Jeff.
+
+| Account | Email | License key | Notice |
+|---|---|---|---|
+| TEST trial ending (2 days) | test+trial-ending@ether-test.invalid | ETH-STN-TEST-E01F55AF | trial_ending |
+| TEST trial ended | test+trial-ended@ether-test.invalid | ETH-STN-TEST-2C71CCE9 | trial_ended |
+| TEST card declined | test+card-declined@ether-test.invalid | ETH-STN-TEST-945D17F2 | payment_failed |
+| TEST card expired | test+card-expired@ether-test.invalid | ETH-STN-TEST-685B6DD5 | card_expired |
+| TEST in grace | test+in-grace@ether-test.invalid | ETH-STN-TEST-56497EED | grace |
+| TEST lapsed | test+lapsed@ether-test.invalid | ETH-STN-TEST-DFB5A7D1 | lapsed |
+| TEST paid OK | test+paid-ok@ether-test.invalid | ETH-STN-TEST-F7730E37 | none |
+
+(The keys are regenerated each time the server starts.) Stripe test mode is not set up; with a test key in
+`C:\ether-backend\.env.billing-test` (`STRIPE_SECRET_KEY=sk_test_…`), the declined / grace / paid accounts also get real
+Stripe test customers. The server refuses any live key.
