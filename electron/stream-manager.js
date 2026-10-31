@@ -31,6 +31,7 @@ function settingsOf(station) {
   const SA = require("./stream-args");
   return {
     stationId: station.id,
+    stationUuid: station.uuid || null,
     stationName: station.name || "",
     server: (station.icecast_server_url || "").trim(),
     mount: (station.icecast_mount || "").trim(),

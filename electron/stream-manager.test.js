@@ -16,8 +16,8 @@ describe("Stream Manager status and settings", () => {
     expect(SM.statusOf(null).state).toBe("idle");
   });
   it("the station's own stream fields, as ON AIR reads them — the password is never sent, only whether one is set", () => {
-    const s = SM.settingsOf({ id: 2, name: "HalloVeen", icecast_server_url: " stream.x.com ", icecast_mount: "/halloveen", icecast_password: "secret", icecast_bitrate: 192 });
-    expect(s).toEqual({ stationId: 2, stationName: "HalloVeen", server: "stream.x.com", mount: "/halloveen", bitrateKbps: 192, hasPassword: true, port: 8000 });
+    const s = SM.settingsOf({ id: 2, uuid: "u-2", name: "HalloVeen", icecast_server_url: " stream.x.com ", icecast_mount: "/halloveen", icecast_password: "secret", icecast_bitrate: 192 });
+    expect(s).toEqual({ stationId: 2, stationUuid: "u-2", stationName: "HalloVeen", server: "stream.x.com", mount: "/halloveen", bitrateKbps: 192, hasPassword: true, port: 8000 });
     expect(JSON.stringify(s)).not.toContain("secret");
   });
   it("a save patches only the four stream fields; blank password keeps the old one; mount gets its slash", () => {

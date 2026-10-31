@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { listenerPageUrl } from "../lib/listenerPage";
 
 // TOOLS → STREAM MANAGER — the full view of the ONE real stream the ON AIR button runs, for the active station
 // (Jeff, 2026-10-30: "real start/stop and real status"). Settings are the station's own stream fields (the ones ON AIR
@@ -6,7 +7,7 @@ import { useState, useEffect, useCallback } from "react";
 // own; listeners come from the Icecast server's status page. electron/stream-manager.js.
 const ether = () => (window as any).ether;
 
-interface Settings { stationId: number; stationName: string; server: string; mount: string; bitrateKbps: number; hasPassword: boolean; port: number }
+interface Settings { stationId: number; stationUuid: string | null; stationName: string; server: string; mount: string; bitrateKbps: number; hasPassword: boolean; port: number }
 interface Status { settings: Settings | null; state: "idle" | "connecting" | "live" | "error"; errorMsg: string | null; uptimeSec: number | null; bitrateKbps: number | null }
 type Listeners = { ok: true; listeners: number | null } | { ok: false; error: string } | null;
 
@@ -45,6 +46,19 @@ export default function StreamManager() {
 
   const live = status?.state === "live";
   const stationId = status?.settings?.stationId;
+  // The station's public listen-live page — the same one Settings → Broadcast → "Your listener page" shows.
+  const stationUuid = status?.settings?.stationUuid;
+  const [listenUrl, setListenUrl] = useState<string | null | undefined>(undefined);   // undefined = still asking
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!stationUuid) { setListenUrl(null); return; }
+    let gone = false;
+    ether()?.station?.metadata?.get(stationUuid).then((r: any) => { if (!gone) setListenUrl(r?.ok ? listenerPageUrl(r.metadata) : null); })
+      .catch(() => { if (!gone) setListenUrl(null); });
+    return () => { gone = true; };
+  }, [stationUuid]);
+  const copyListen = async () => { if (!listenUrl) return; try { await navigator.clipboard.writeText(listenUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ } };
+  const openListen = () => { if (!listenUrl) return; const sys = ether()?.system; if (sys?.openUrl) sys.openUrl(listenUrl); else window.open(listenUrl, "_blank"); };
   useEffect(() => {
     if (!live || stationId == null) { setListeners(null); return; }
     const ask = async () => { try { setListeners(await ether().invoke("stream-manager:listeners", stationId)); } catch (e) { setListeners({ ok: false, error: String(e) }); } };
@@ -108,6 +122,19 @@ export default function StreamManager() {
           ))}
         </div>
         {live && listeners && !listeners.ok && <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-tertiary)" }}>Listener count unavailable: {listeners.error}.</div>}
+      </div>
+
+      {/* Listen live — the station's public listener page */}
+      <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "12px 16px", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Listen live</div>
+        {listenUrl === undefined ? <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Looking up this station's listener page…</span>
+          : listenUrl ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <code style={{ fontSize: 13, fontFamily: "monospace", color: "#c4b5fd", wordBreak: "break-all" }}>{listenUrl}</code>
+              <button onClick={copyListen} style={{ padding: "5px 12px", fontSize: 12, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>{copied ? "Copied!" : "Copy"}</button>
+              <button onClick={openListen} style={{ padding: "5px 12px", fontSize: 12, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Open</button>
+            </div>
+          ) : <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>This station has no public listener page yet. Turn it on and give it an address in Settings → Broadcast → Your listener page.</span>}
       </div>
 
       {/* The station's stream settings — the ones ON AIR uses */}

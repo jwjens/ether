@@ -21,10 +21,13 @@ It shows:
 - **Sending to**: the server, port and mount the stream goes to.
 - **Bitrate**: what the encoder is actually sending while on air, and the station's setting otherwise.
 - **Listeners**: the number of people listening to this mount, read from your Icecast server's own status page.
+- **Listen live**: your station's public listener page, with **Copy** and **Open**. It is the same address as Settings →
+  Broadcast → Your listener page. If the station has no listener page yet, it says where to turn one on.
 
 ## When to use it
 
 - To check that the stream is really on air and how many people are listening.
+- To copy or open the station's listen-live link.
 - To change the station's Icecast server, mount, password or bitrate.
 - To start or stop the stream when you are not on the main screen.
 

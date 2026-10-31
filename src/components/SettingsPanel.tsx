@@ -32,6 +32,7 @@ import { validateSlug, slugify } from "../lib/slug";
 import { ProcessingTrio, dbfsPct } from "./ProcessingMeters";
 import { fetchMyMemberships, type Membership } from "../lib/memberships";
 import { PAGE_TYPES } from "../lib/publicPages";
+import { listenerPageUrl } from "../lib/listenerPage";
 import { useAccountLinks, LinkRows } from "./PublicLinks";
 
 // ── Settings categories ──────────────────────────────────────
@@ -1670,8 +1671,6 @@ const SOCIAL_FIELDS: { key: string; label: string; placeholder: string }[] = [
   { key: "youtube",   label: "YouTube",   placeholder: "https://youtube.com/@…" },
 ];
 
-// Where the listener PWA is served (Cloudflare Pages → listen.ether-technologies.com).
-const LISTENER_BASE_URL = "https://listen.ether-technologies.com";
 // Managed Ether streaming edge — the public listener page only needs the mount name appended.
 const STREAM_PREFIX = "https://stream.ether-technologies.com:8443/";
 
@@ -1799,8 +1798,8 @@ export function PublicPageEditor({ stationUuid, stationName }: { stationUuid: st
 
   // The live listener URL reflects what's actually PUBLISHED (last saved), not
   // unsaved form edits — so we never advertise a URL that would 404.
-  const published = !!loaded?.public_enabled && !!loaded?.slug;
-  const liveUrl = published ? `${LISTENER_BASE_URL}/${loaded.slug}` : null;
+  const liveUrl = listenerPageUrl(loaded);
+  const published = !!liveUrl;
   // Stream URL is entered like the address: a fixed prefix + just the mount name. Strip the
   // managed prefix (or any scheme://host/) so the input shows only the editable mount.
   const streamMount = (() => {
