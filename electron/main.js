@@ -8652,7 +8652,7 @@ ipcMain.handle("stream-manager:status", (_, stationId) => streamManagerStatus(st
 ipcMain.handle("stream-manager:listeners", async (_, stationId) => {
   const SM = require("./stream-manager");
   const st = SM.settingsOf(getDb().prepare("SELECT * FROM stations WHERE id=? AND deleted_at IS NULL").get(stationId ?? getActiveStationId()));
-  return st ? SM.fetchListeners({ server: st.server, mount: st.mount }) : { ok: false, error: "no station" };
+  return st ? SM.fetchListeners({ server: st.server, mount: st.mount, port: st.port }) : { ok: false, error: "no station" };
 });
 // Saves only the four stream fields go-live reads, on the station row (the same row Station Manager edits).
 ipcMain.handle("stream-manager:save", (_, stationId, edit) => {
@@ -13616,7 +13616,8 @@ async function streamGoLive(args = {}) {
     const pw     = station.icecast_password?.trim()   || 'hackme';
     const mount  = station.icecast_mount?.trim()      || '/live';
     const state  = _getStreamState(stationId);
-    state.url       = `icecast://source:${pw}@${server}:8000${mount}`;
+    const sp = require('../audiod/stream').serverAndPort(server);   // the port written in the address, else 8000
+    state.url       = `icecast://source:${pw}@${sp.host}:${sp.port}${mount}`;
     state.destLabel = `Icecast @ ${server}${mount}`;
     state.armed     = true;
 

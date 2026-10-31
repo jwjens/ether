@@ -42,7 +42,8 @@ It shows:
 ## How it behaves
 
 - Saved settings are used the next time the stream starts. If it is on air, stop and start it to switch over.
-- Ether sends to port 8000 on your server.
+- Ether sends to the port written in the server address (for example `stream.example.com:8443`), or to port 8000
+  when none is written.
 - If the stream keeps failing, the status says ERROR with the server's own reason (for example "The server refused the
   stream (403): another computer may be sending to this mount, or the password is wrong"). Ether tries again every 30
   seconds until you press **⏹ Stop streaming**.

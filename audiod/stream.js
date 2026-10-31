@@ -37,6 +37,15 @@ function parseLine(line) {
   };
 }
 
+// THE SERVER'S OWN PORT (dead-controls item 20): a server typed with its port ("stream.example.com:8443", or a full
+// "http://host:8443/") used to become "host:8443:8000" — every stream went to port 8000. The port written in the
+// address is used; 8000 only when none is written. Shared by main (in-process path, Stream Manager, metadata).
+function serverAndPort(raw, fallback = 8000) {
+  let s = String(raw || "").trim().replace(/^[a-z]+:\/\//i, "").replace(/\/.*$/, "");
+  const m = s.match(/^(.*):(\d{1,5})$/);
+  return m ? { host: m[1], port: parseInt(m[2], 10) } : { host: s, port: fallback };
+}
+
 // THE REAL REASON AFTER REPEATED FAILURES (Jeff, 2026-10-31, HalloVeen check): the cooldown message used to replace the
 // reason the server gave (e.g. "Forbidden (403)" when another computer holds the mount) with a generic "check URL and
 // credentials". The message now keeps that reason and says what Ether does next. Shared by the in-process path (main.js).
@@ -91,7 +100,8 @@ class StreamSupervisor {
     const mount = String(config.mount || "/live").trim();
     this._sampleRate = config.sampleRate || 44100;
     this._bitrate = config.bitrate || 128;
-    this.url = `icecast://source:${pw}@${server}:${config.icecastPort || 8000}${mount}`;
+    const sp = serverAndPort(server, config.icecastPort || 8000);
+    this.url = `icecast://source:${pw}@${sp.host}:${sp.port}${mount}`;
     this.armed = true; this.failureCount = 0;
     this._spawn(port);
     return { ok: true, server, mount };
@@ -157,4 +167,4 @@ class StreamSupervisor {
   stop() { this.armed = false; this.failureCount = 0; this._kill(); this.statusState = "idle"; this.errorMsg = null; this.speed = null; this.bitrate = null; this._emit(); return { ok: true }; }
 }
 
-module.exports = { StreamSupervisor, withPassword, repeatedFailureMsg };
+module.exports = { StreamSupervisor, withPassword, repeatedFailureMsg, serverAndPort };

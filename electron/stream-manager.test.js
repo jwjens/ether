@@ -88,3 +88,24 @@ describe("a failing stream says why and can be stopped (HalloVeen check, 2026-10
     s.stop(); expect(s.errorMsg).toBe(null); expect(s.statusState).toBe("idle");
   });
 });
+
+describe("the server's own port (item 20)", () => {
+  const { serverAndPort } = require_("../audiod/stream");
+  it("uses the port written in the address; 8000 when none is", () => {
+    expect(serverAndPort("44.244.52.207")).toEqual({ host: "44.244.52.207", port: 8000 });
+    expect(serverAndPort("stream.ether-technologies.com:8443")).toEqual({ host: "stream.ether-technologies.com", port: 8443 });
+    expect(serverAndPort(" https://stream.x.com:8443/ov ")).toEqual({ host: "stream.x.com", port: 8443 });
+  });
+  it("the encoder's address, Stream Manager and the listener count all use it", async () => {
+    const { StreamSupervisor } = require_("../audiod/stream");
+    const s = Object.create(StreamSupervisor.prototype);
+    Object.assign(s, { getPort: () => 0, _emit: () => {} });
+    expect(SM.settingsOf({ id: 1, icecast_server_url: "stream.x.com:8443", icecast_mount: "/ov" })).toMatchObject({ server: "stream.x.com", port: 8443 });
+    let asked = "";
+    await SM.fetchListeners({ server: "stream.x.com", mount: "/ov", port: 8443, fetchImpl: async (u) => { asked = u; return { ok: true, json: async () => ({ icestats: {} }) }; } });
+    expect(asked).toBe("http://stream.x.com:8443/status-json.xsl");
+    expect(read("audiod/stream.js")).toMatch(/const sp = serverAndPort\(server, config\.icecastPort \|\| 8000\);\s*this\.url = `icecast:\/\/source:\$\{pw\}@\$\{sp\.host\}:\$\{sp\.port\}\$\{mount\}`/);
+    expect(read("electron/main.js")).not.toMatch(/@\$\{server\}:8000\$\{mount\}/);
+  });
+});
+

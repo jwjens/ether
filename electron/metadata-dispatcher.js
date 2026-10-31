@@ -60,7 +60,8 @@ function songText(payload) {
 function resolveIcecast(cfg, station) {
   if (!cfg.useStationStream) return cfg;
   if (!station || !String(station.icecast_server_url || "").trim()) throw new Error("this station has no stream server set (Stream Manager)");
-  return { host: String(station.icecast_server_url).trim(), port: 8000, mount: station.icecast_mount || "/stream",
+  const sp = require("../audiod/stream").serverAndPort(station.icecast_server_url);   // its own port, else 8000
+  return { host: sp.host, port: sp.port, mount: station.icecast_mount || "/stream",
            adminUser: "source", adminPass: station.icecast_password || "", useHttps: false };
 }
 function stationRow(stationId) {

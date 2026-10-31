@@ -33,11 +33,11 @@ function settingsOf(station) {
     stationId: station.id,
     stationUuid: station.uuid || null,
     stationName: station.name || "",
-    server: (station.icecast_server_url || "").trim(),
+    server: require("../audiod/stream").serverAndPort(station.icecast_server_url).host,
     mount: (station.icecast_mount || "").trim(),
     bitrateKbps: SA.icecastBitrateOf(station),
     hasPassword: !!(station.icecast_password || "").trim(),
-    port: ICECAST_PORT,
+    port: require("../audiod/stream").serverAndPort(station.icecast_server_url, ICECAST_PORT).port,
   };
 }
 
@@ -56,12 +56,12 @@ function listenersFor(statusJson, mount) {
 }
 
 /** Ask the Icecast server. → { ok: true, listeners } (null = the mount is not on the server) | { ok: false, error } */
-async function fetchListeners({ server, mount, fetchImpl = fetch, timeLimitMs = LISTENERS_TIME_LIMIT_MS }) {
+async function fetchListeners({ server, mount, port = ICECAST_PORT, fetchImpl = fetch, timeLimitMs = LISTENERS_TIME_LIMIT_MS }) {
   if (!server || !mount) return { ok: false, error: "no server or mount set" };
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeLimitMs);
   try {
-    const r = await fetchImpl(`http://${server}:${ICECAST_PORT}/status-json.xsl`, { signal: ctl.signal });
+    const r = await fetchImpl(`http://${server}:${port}/status-json.xsl`, { signal: ctl.signal });
     if (!r.ok) return { ok: false, error: `the server answered ${r.status}` };
     return { ok: true, listeners: listenersFor(await r.json(), mount) };
   } catch (e) {
