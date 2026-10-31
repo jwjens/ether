@@ -8,6 +8,7 @@
   },
   "asarUnpack": [
     "node_modules/ffmpeg-static/**",
+    "node_modules/@serialport/bindings-cpp/**",
     "watchdog/**",
     "audiod/**",
     "native/**/*.node",

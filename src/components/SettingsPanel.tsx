@@ -3354,8 +3354,8 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
         category="broadcast"
         icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M2 12h20M19.07 4.93l-14.14 14.14M19.07 19.07l-14.14-14.14"/></svg>}
         title="Stream Metadata Outputs"
-        description="Push 'now playing' to Icecast, Shoutcast, TuneIn AIR, RDS encoders, or any custom webhook — multiple targets in parallel">
-        <StreamMetadataPanel />
+        description="Every song that starts on this station is sent as 'Artist - Title' to each output you add here: this station's Icecast stream, Shoutcast, TuneIn AIR, an RDS encoder, or a webhook">
+        <StreamMetadataPanel stationId={stationId ?? null} />
       </Section>
 
       {/* ── Pair Mobile App (Ether2Go) ── */}

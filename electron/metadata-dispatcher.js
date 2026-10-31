@@ -27,28 +27,45 @@ let ipcMain = null;
 let serialPortModule = null; // lazy-loaded if any RDS target is configured
 
 // ── DB helpers ────────────────────────────────────────────────
-function listTargets(enabledOnly = true) {
+// Per station, local to this computer (v69, scripts/migrate-stream-metadata-targets-phase-sync-69.js).
+function listTargets(stationId, enabledOnly = true) {
   if (!getDb()) return [];
   try {
-    const sql = enabledOnly
-      ? "SELECT * FROM stream_metadata_targets WHERE enabled = 1 ORDER BY id"
-      : "SELECT * FROM stream_metadata_targets ORDER BY id";
-    return getDb().prepare(sql).all();
+    return getDb().prepare(`SELECT * FROM stream_metadata_targets WHERE station_id = ?${enabledOnly ? " AND enabled = 1" : ""} ORDER BY id`).all(stationId);
   } catch (e) {
     console.error("[METADATA] listTargets failed:", e.message);
     return [];
   }
 }
 
-function recordResult(id, status, errorMsg = "") {
+function recordResult(id, status, errorMsg = "", sent = "") {
   if (!getDb()) return;
   try {
     getDb().prepare(
-      "UPDATE stream_metadata_targets SET last_status = ?, last_error = ?, last_pushed_at = ?, push_count = push_count + 1 WHERE id = ?"
-    ).run(status, errorMsg, Math.floor(Date.now() / 1000), id);
+      "UPDATE stream_metadata_targets SET last_status = ?, last_error = ?, last_pushed_at = ?, last_sent = ?, push_count = push_count + 1 WHERE id = ?"
+    ).run(status, errorMsg, Math.floor(Date.now() / 1000), sent, id);
   } catch (e) {
     console.error("[METADATA] recordResult failed:", e.message);
   }
+}
+
+// "Artist - Title" (just the title when there is no artist) — what every output is sent.
+function songText(payload) {
+  const artist = String(payload?.artist || "").trim(), title = String(payload?.title || "").trim();
+  return artist && title ? `${artist} - ${title}` : (title || artist);
+}
+
+// An Icecast output can use THIS station's own stream (the server, mount and source password Stream Manager / ON AIR
+// use): Icecast accepts a metadata update for a mount from that mount's source login.
+function resolveIcecast(cfg, station) {
+  if (!cfg.useStationStream) return cfg;
+  if (!station || !String(station.icecast_server_url || "").trim()) throw new Error("this station has no stream server set (Stream Manager)");
+  return { host: String(station.icecast_server_url).trim(), port: 8000, mount: station.icecast_mount || "/stream",
+           adminUser: "source", adminPass: station.icecast_password || "", useHttps: false };
+}
+function stationRow(stationId) {
+  try { return getDb()?.prepare("SELECT icecast_server_url, icecast_mount, icecast_password FROM stations WHERE id = ?").get(stationId) || null; }
+  catch { return null; }
 }
 
 // ── HTTP helper — small, no extra dep ─────────────────────────
@@ -104,7 +121,7 @@ async function pushIcecast(cfg, payload) {
   const protocol = cfg.useHttps ? "https" : "http";
   const port = cfg.port || 8000;
   const mount = cfg.mount?.startsWith("/") ? cfg.mount : "/" + (cfg.mount || "stream");
-  const song = `${payload.artist || ""} - ${payload.title || ""}`.trim().replace(/^- /, "");
+  const song = songText(payload);
   const url = `${protocol}://${cfg.host}:${port}/admin/metadata?mount=${encodeURIComponent(mount)}&mode=updinfo&song=${encodeURIComponent(song)}`;
   await httpRequest(url, {
     method: "GET",
@@ -117,7 +134,7 @@ async function pushIcecast(cfg, payload) {
 async function pushShoutcast(cfg, payload) {
   const port = cfg.port || 8000;
   const sid  = cfg.sid  || 1;
-  const song = `${payload.artist || ""} - ${payload.title || ""}`.trim().replace(/^- /, "");
+  const song = songText(payload);
   let url;
   if ((cfg.version || 1) >= 2) {
     // v2: /admin.cgi?sid=&mode=updinfo
@@ -170,7 +187,7 @@ async function pushRds(cfg, payload) {
   });
   await new Promise((res, rej) => port.open(err => err ? rej(err) : res()));
 
-  const text = `${payload.artist || ""} - ${payload.title || ""}`.trim().replace(/^- /, "").slice(0, 64);
+  const text = songText(payload).slice(0, 64);
   let cmd;
   switch (cfg.encoderType) {
     case "inovonics": cmd = `TEXT=${text}\r\nDPS=${text.slice(0, 8)}\r\n`; break;
@@ -200,73 +217,65 @@ async function pushWebhook(cfg, payload) {
   });
 }
 
-// ── Dispatcher — fan out to all enabled targets ───────────────
-async function dispatch(payload) {
-  const targets = listTargets(true);
-  if (targets.length === 0) return;
+// ── Dispatcher — fan out to the station's enabled targets ─────
+async function pushOne(t, payload) {
+  let cfg = {};
+  try { cfg = JSON.parse(t.config_json || "{}"); } catch {}
+  switch (t.type) {
+    case "icecast":   return pushIcecast(resolveIcecast(cfg, stationRow(t.station_id)), payload);
+    case "shoutcast": return pushShoutcast(cfg, payload);
+    case "tunein":    return pushTuneIn(cfg, payload);
+    case "rds":       return pushRds(cfg, payload);
+    case "webhook":   return pushWebhook(cfg, payload);
+    default: throw new Error(`unknown output type: ${t.type}`);
+  }
+}
 
-  // Fire all in parallel — one slow target shouldn't block others.
+const lastSong = new Map();   // stationId → the last song that started (Test sends it)
+
+async function dispatch(stationId, payload) {
+  if (!payload || !(payload.title || payload.artist)) return;
+  lastSong.set(stationId, payload);
+  const targets = listTargets(stationId, true);
+  // All in parallel — one slow output never holds up another.
   await Promise.all(targets.map(async t => {
-    let cfg = {};
-    try { cfg = JSON.parse(t.config_json || "{}"); } catch {}
-    try {
-      switch (t.type) {
-        case "icecast":   await pushIcecast(cfg, payload);   break;
-        case "shoutcast": await pushShoutcast(cfg, payload); break;
-        case "tunein":    await pushTuneIn(cfg, payload);    break;
-        case "rds":       await pushRds(cfg, payload);       break;
-        case "webhook":   await pushWebhook(cfg, payload);   break;
-        default: throw new Error(`unknown target type: ${t.type}`);
-      }
-      recordResult(t.id, "ok", "");
-    } catch (e) {
+    const sent = songText(payload);
+    try { await pushOne(t, payload); recordResult(t.id, "ok", "", sent); }
+    catch (e) {
       const msg = e?.message || String(e);
-      console.warn(`[METADATA] ${t.type} push to "${t.name}" failed:`, msg);
-      recordResult(t.id, "error", msg);
+      console.warn(`[METADATA] ${t.type} output "${t.name}" failed:`, msg);
+      recordResult(t.id, "error", msg, sent);
     }
   }));
 }
 
-// ── Test push — manually fire a target with sample data, used by Settings ──
+// Test: send the station's current song to one output now (a labelled test line when nothing has played yet).
 async function testPush(targetId) {
   if (!getDb()) return { ok: false, error: "no db" };
-  try {
-    const t = getDb().prepare("SELECT * FROM stream_metadata_targets WHERE id = ?").get(targetId);
-    if (!t) return { ok: false, error: "target not found" };
-    let cfg = {};
-    try { cfg = JSON.parse(t.config_json || "{}"); } catch {}
-    const payload = { title: "Test Track (Ether)", artist: "Ether Test", album: "", duration: 180 };
-    switch (t.type) {
-      case "icecast":   await pushIcecast(cfg, payload);   break;
-      case "shoutcast": await pushShoutcast(cfg, payload); break;
-      case "tunein":    await pushTuneIn(cfg, payload);    break;
-      case "rds":       await pushRds(cfg, payload);       break;
-      case "webhook":   await pushWebhook(cfg, payload);   break;
-      default: throw new Error(`unknown target type: ${t.type}`);
-    }
-    recordResult(targetId, "ok", "");
-    return { ok: true };
-  } catch (e) {
-    const msg = e?.message || String(e);
-    recordResult(targetId, "error", msg);
-    return { ok: false, error: msg };
-  }
+  const t = getDb().prepare("SELECT * FROM stream_metadata_targets WHERE id = ?").get(targetId);
+  if (!t) return { ok: false, error: "output not found" };
+  const payload = lastSong.get(t.station_id) || { title: "Test from Ether", artist: "Ether" };
+  const sent = songText(payload);
+  try { await pushOne(t, payload); recordResult(targetId, "ok", "", sent); return { ok: true, sent }; }
+  catch (e) { const msg = e?.message || String(e); recordResult(targetId, "error", msg, sent); return { ok: false, error: msg, sent }; }
 }
 
-// ── Install — wire IPC handlers and a now-playing listener ────
+// ── Install — the Settings screen's IPC. main.js calls dispatch() when a song starts (the daemon's playstart). ──
+// No seed from the old stream_settings row (Jeff, 2026-10-30: it would create a surprise output from a stale row).
 function installMetadataDispatcher(_ipcMain, database) {
   getDb = (typeof database === "function") ? database : () => database;
   ipcMain = _ipcMain;
+  const sid = (v) => { const n = Number(v); if (!Number.isInteger(n) || n <= 0) throw new Error("no station"); return n; };
 
-  ipcMain.handle("metadata:list-targets", () => listTargets(false));
-  ipcMain.handle("metadata:add-target", (_, { name, type, enabled = 1, config }) => {
-    getDb().prepare("INSERT INTO stream_metadata_targets (name, type, enabled, config_json) VALUES (?, ?, ?, ?)")
-      .run(name, type, enabled ? 1 : 0, JSON.stringify(config || {}));
+  ipcMain.handle("metadata:list-targets", (_, stationId) => listTargets(sid(stationId), false));
+  ipcMain.handle("metadata:add-target", (_, { stationId, name, type, enabled = 1, config }) => {
+    getDb().prepare("INSERT INTO stream_metadata_targets (station_id, name, type, enabled, config_json) VALUES (?, ?, ?, ?, ?)")
+      .run(sid(stationId), name || "", type, enabled ? 1 : 0, JSON.stringify(config || {}));
     return { ok: true };
   });
   ipcMain.handle("metadata:update-target", (_, { id, name, type, enabled, config }) => {
     getDb().prepare("UPDATE stream_metadata_targets SET name = ?, type = ?, enabled = ?, config_json = ? WHERE id = ?")
-      .run(name, type, enabled ? 1 : 0, JSON.stringify(config || {}), id);
+      .run(name || "", type, enabled ? 1 : 0, JSON.stringify(config || {}), id);
     return { ok: true };
   });
   ipcMain.handle("metadata:delete-target", (_, { id }) => {
@@ -274,37 +283,11 @@ function installMetadataDispatcher(_ipcMain, database) {
     return { ok: true };
   });
   ipcMain.handle("metadata:test-target", (_, { id }) => testPush(id));
-
-  // Hook into the existing now-playing pipe — main.js relays
-  // "now-playing-update" to all renderer windows; we also dispatch out to
-  // metadata targets here. This way the dispatch happens regardless of
-  // which renderer window is open (or even if no window is open during
-  // unattended automation).
-  ipcMain.on("now-playing-update", (_, payload) => {
-    if (payload && (payload.title || payload.artist)) dispatch(payload).catch(() => {});
+  ipcMain.handle("metadata:serial-ports", async () => {
+    try { const { SerialPort } = require("serialport"); return { ok: true, ports: (await SerialPort.list()).map(p => ({ path: p.path, name: p.friendlyName || p.manufacturer || "" })) }; }
+    catch (e) { return { ok: false, error: e?.message || String(e) }; }
   });
-
-  // One-time migration — if user has an old single-row stream_settings
-  // configured, seed it as the first metadata target so the existing
-  // Icecast push keeps working after upgrade.
-  try {
-    const count = getDb().prepare("SELECT COUNT(*) as n FROM stream_metadata_targets").get().n;
-    if (count === 0) {
-      const old = getDb().prepare("SELECT * FROM stream_settings WHERE id = 1").get();
-      if (old && old.host) {
-        getDb().prepare("INSERT INTO stream_metadata_targets (name, type, enabled, config_json) VALUES (?, ?, ?, ?)")
-          .run("Main Icecast (migrated)", "icecast", old.is_active ? 1 : 0, JSON.stringify({
-            host: old.host, port: old.port || 8000, mount: old.mount || "/stream",
-            adminUser: old.username || "admin", adminPass: old.password || "",
-          }));
-        console.log("[METADATA] Migrated existing Icecast settings to stream_metadata_targets");
-      }
-    }
-  } catch (e) {
-    console.warn("[METADATA] migration check failed:", e.message);
-  }
-
   console.log("[METADATA] Dispatcher installed");
 }
 
-module.exports = { installMetadataDispatcher, dispatch, testPush };
+module.exports = { installMetadataDispatcher, dispatch, testPush, songText, resolveIcecast, pushIcecast, pushWebhook, _setDb: (fn) => { getDb = fn; } };

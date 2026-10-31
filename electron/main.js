@@ -1482,6 +1482,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // The daemon stamped generated_schedule (playing → played) at this go-live (engine.js:1774-1781).
         _scheduleChanged(m.stationId, 'playstart');
         try { _health.notePlayStart(m.stationId, m.title, m.artist); } catch {}
+        try { _metadataOut?.dispatch(m.stationId, { title: m.title, artist: m.artist }).catch(() => {}); } catch {}
         // Song boundary: the cleanest moment to swap out a stale-but-healthy daemon (current song
         // just ended). The no-audio timer covers wedged/idle daemons that never reach here.
         if (_daemonReloadArmed) fireDaemonReload("song boundary");
@@ -8737,8 +8738,15 @@ ipcMain.on("now-playing-request", (event) => {
   sendToAllWindowsExcept(event.sender.id, "now-playing-request", {});
 });
 
+let _metaInProcLast = "";
 ipcMain.on("now-playing-update", (_, payload) => {
   sendToAllWindows("now-playing-update", payload);
+  // Stream Metadata Outputs without the audio daemon (the in-process engine sends no playstart): the window's
+  // now-playing for the active station, sent once per song (this message repeats while a song plays).
+  if (!AUDIO_DAEMON && _metadataOut && payload && (payload.title || payload.artist)) {
+    const key = `${getActiveStationId()}|${payload.artist || ""}|${payload.title || ""}|${payload.filePath || ""}`;
+    if (key !== _metaInProcLast) { _metaInProcLast = key; _metadataOut.dispatch(getActiveStationId(), { title: payload.title, artist: payload.artist }).catch(() => {}); }
+  }
 });
 ipcMain.handle("set_now_playing", (_, args) => {
   sendToAllWindows("now-playing-update", args);
@@ -9765,6 +9773,17 @@ try {
   installAIVoice(ipcMain, getDb, { userDataPath: P.profileDir(P.activeKey()) });   // getDb (function) → resolves the live handle after a reopen
 } catch (e) {
   console.warn("[AI-VOICE] installAIVoice failed:", e.message);
+}
+
+// ── Stream Metadata Outputs (build B, Jeff 2026-10-30): every song that starts on a station goes out as "Artist - Title"
+// to that station's enabled outputs, from main, so it keeps sending with no window open. Sent from the daemon's
+// playstart (below) — the one song-start event main hears. electron/metadata-dispatcher.js.
+let _metadataOut = null;
+try {
+  _metadataOut = require("./metadata-dispatcher.js");
+  _metadataOut.installMetadataDispatcher(ipcMain, getDb);
+} catch (e) {
+  console.warn("[METADATA] install failed:", e.message);
 }
 
 // ── Video engine (renderer composites; we run ffmpeg for RTMP/MP4) ─────────

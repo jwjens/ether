@@ -22,6 +22,7 @@ interface Target {
   last_pushed_at: number;
   last_status: string;     // 'ok' | 'error' | ''
   last_error: string;
+  last_sent?: string;
   push_count: number;
 }
 
@@ -34,7 +35,7 @@ const TYPE_LABEL: Record<TargetType, string> = {
 };
 
 const TYPE_DESC: Record<TargetType, string> = {
-  icecast:   "Pushes title/artist to an Icecast 2 server's admin API. Most internet radio stations use this.",
+  icecast:   "Puts the song title on an Icecast 2 mount — this station's own stream (the one Stream Manager and ON AIR send to), or any other Icecast server.",
   shoutcast: "Pushes to Shoutcast v1 or v2 servers. Common with legacy stream providers.",
   tunein:    "Tells TuneIn what's playing — required for the TuneIn 'now playing' overlay on car receivers and the TuneIn app.",
   rds:       "Sends RadioText to an RDS encoder over a serial (COM) port. For FM broadcasters with Inovonics, Audemat, or Deva encoders.",
@@ -51,7 +52,7 @@ const TYPE_COLOR: Record<TargetType, string> = {
 
 // Empty config defaults per type — used when adding a new target.
 const DEFAULT_CONFIG: Record<TargetType, any> = {
-  icecast:   { host: "localhost", port: 8000, mount: "/stream", adminUser: "admin", adminPass: "", useHttps: false },
+  icecast:   { useStationStream: true, host: "", port: 8000, mount: "/stream", adminUser: "admin", adminPass: "", useHttps: false },
   shoutcast: { host: "localhost", port: 8000, sid: 1, password: "", version: 2 },
   tunein:    { partnerId: "", partnerKey: "", stationId: "" },
   rds:       { port: "COM3", baud: 9600, encoderType: "inovonics" },
@@ -67,7 +68,8 @@ function fmtTimeAgo(unixSec: number): string {
   return `${Math.floor(sec / 86400)}d ago`;
 }
 
-export default function StreamMetadataPanel() {
+// Per station (Jeff, 2026-10-30, build B): the outputs of the station you are working in, kept on this computer.
+export default function StreamMetadataPanel({ stationId }: { stationId: number | null }) {
   const ether = (window as any).ether;
   const [targets, setTargets] = useState<Target[]>([]);
   const [editing, setEditing] = useState<Target | null>(null);
@@ -75,16 +77,16 @@ export default function StreamMetadataPanel() {
   const [testStatus, setTestStatus] = useState<Record<number, string>>({});
 
   const refresh = async () => {
-    if (!ether?.metadata) return;
+    if (!ether?.metadata || !stationId) { setTargets([]); return; }
     try {
-      const list = await ether.metadata.listTargets();
+      const list = await ether.metadata.listTargets(stationId);
       setTargets(Array.isArray(list) ? list : []);
     } catch (e) {
       console.error("[METADATA] listTargets failed:", e);
     }
   };
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 10000); return () => clearInterval(t); }, [stationId]);   // repaint each output's last send
 
   const toggleEnabled = async (t: Target) => {
     let cfg: any = {}; try { cfg = JSON.parse(t.config_json || "{}"); } catch {}
@@ -103,7 +105,7 @@ export default function StreamMetadataPanel() {
     try {
       const r = await ether.metadata.testTarget(t.id);
       if (r?.ok) {
-        setTestStatus(s => ({ ...s, [t.id]: "✓ Push succeeded" }));
+        setTestStatus(s => ({ ...s, [t.id]: `✓ Sent "${r.sent}"` }));
       } else {
         setTestStatus(s => ({ ...s, [t.id]: `✗ ${r?.error || "failed"}` }));
       }
@@ -119,14 +121,14 @@ export default function StreamMetadataPanel() {
       {/* Target list */}
       {targets.length === 0 && (
         <div style={{ padding: "20px", background: "var(--bg-tertiary)", border: "1px dashed var(--border-primary)", borderRadius: 0, textAlign: "center" as any, color: "var(--text-tertiary)", fontSize: 13 }}>
-          No metadata outputs configured. Add one below to start pushing now-playing data to your stream provider.
+          {stationId ? "No outputs yet. Add one below: every song that starts on this station is then sent to it as \"Artist - Title\"." : "Pick a station first — outputs belong to a station."}
         </div>
       )}
 
       {targets.map(t => {
         let cfg: any = {}; try { cfg = JSON.parse(t.config_json || "{}"); } catch {}
         const summary =
-          t.type === "icecast"   ? `${cfg.host}:${cfg.port}${cfg.mount}` :
+          t.type === "icecast"   ? (cfg.useStationStream ? "this station's stream" : `${cfg.host}:${cfg.port}${cfg.mount}`) :
           t.type === "shoutcast" ? `${cfg.host}:${cfg.port} (sid ${cfg.sid}, v${cfg.version})` :
           t.type === "tunein"    ? `Station ${cfg.stationId || "—"}` :
           t.type === "rds"       ? `${cfg.port} @ ${cfg.baud} baud (${cfg.encoderType})` :
@@ -157,8 +159,9 @@ export default function StreamMetadataPanel() {
                   {t.last_status || "idle"}
                 </span>
                 <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                  {t.push_count} pushes · {fmtTimeAgo(t.last_pushed_at)}
+                  {t.push_count} sent · {fmtTimeAgo(t.last_pushed_at)}
                 </span>
+                {t.last_sent && <span title={t.last_sent} style={{ fontSize: 11, color: "var(--text-tertiary)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>last: {t.last_sent}</span>}
               </div>
               {/* Buttons */}
               <div style={{ display: "flex", gap: 4, marginLeft: 8 }}>
@@ -222,7 +225,7 @@ export default function StreamMetadataPanel() {
             if (t.id) {
               await ether.metadata.updateTarget({ id: t.id, name: t.name, type: t.type, enabled: t.enabled, config: cfg });
             } else {
-              await ether.metadata.addTarget({ name: t.name, type: t.type, enabled: t.enabled, config: cfg });
+              await ether.metadata.addTarget({ stationId, name: t.name, type: t.type, enabled: t.enabled, config: cfg });
             }
             setEditing(null); setAdding(null);
             refresh();
@@ -267,6 +270,12 @@ function TargetEditor({ initial, onClose, onSave }: {
         </Field>
 
         {initial.type === "icecast" && <>
+          <Field label="Which stream">
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+              <input type="checkbox" checked={!!cfg.useStationStream} onChange={e => setField("useStationStream", e.target.checked)} /> This station's own stream (server, mount and password from Stream Manager)
+            </label>
+          </Field>
+          {!cfg.useStationStream && <>
           <Field label="Server host"><input value={cfg.host || ""} onChange={e => setField("host", e.target.value)} placeholder="stream.example.com" style={inputStyle} /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Field label="Port"><input type="number" value={cfg.port || 8000} onChange={e => setField("port", parseInt(e.target.value || "8000", 10))} style={inputStyle} /></Field>
@@ -281,6 +290,7 @@ function TargetEditor({ initial, onClose, onSave }: {
               <input type="checkbox" checked={!!cfg.useHttps} onChange={e => setField("useHttps", e.target.checked)} /> Connect over HTTPS
             </label>
           </Field>
+          </>}
         </>}
 
         {initial.type === "shoutcast" && <>
@@ -308,11 +318,8 @@ function TargetEditor({ initial, onClose, onSave }: {
         </>}
 
         {initial.type === "rds" && <>
-          <div style={{ padding: "10px 12px", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", marginBottom: 12, fontSize: 12, color: "var(--accent-amber)", lineHeight: 1.5 }}>
-            Requires the <code>serialport</code> npm package. Run <code>npm install serialport</code> in the project root if you see "serialport not installed" errors.
-          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Field label="Serial port"><input value={cfg.port || ""} onChange={e => setField("port", e.target.value)} placeholder="COM3 or /dev/ttyUSB0" style={inputStyle} /></Field>
+            <Field label="Serial port"><SerialPortPicker value={cfg.port || ""} onChange={v => setField("port", v)} /></Field>
             <Field label="Baud rate">
               <select value={cfg.baud || 9600} onChange={e => setField("baud", parseInt(e.target.value, 10))} style={inputStyle}>
                 {[1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200].map(b => <option key={b} value={b}>{b}</option>)}
@@ -371,6 +378,25 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 4, letterSpacing: "0.04em", textTransform: "uppercase" }}>{label}</div>
       {children}
+    </div>
+  );
+}
+
+// The COM ports this computer has right now (electron/metadata-dispatcher.js → serialport), or type one in.
+function SerialPortPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [ports, setPorts] = useState<{ path: string; name: string }[] | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    (window as any).ether?.metadata?.serialPorts?.().then((r: any) => { if (r?.ok) setPorts(r.ports); else { setPorts([]); setErr(r?.error || "could not list ports"); } })
+      .catch((e: any) => { setPorts([]); setErr(String(e)); });
+  }, []);
+  return (
+    <div>
+      <input list="ether-serial-ports" value={value} onChange={e => onChange(e.target.value)} placeholder="COM3" style={inputStyle} />
+      <datalist id="ether-serial-ports">{(ports || []).map(p => <option key={p.path} value={p.path}>{p.name}</option>)}</datalist>
+      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+        {ports == null ? "Looking for serial ports…" : err ? `Couldn't list serial ports: ${err}` : ports.length ? `Found: ${ports.map(p => p.path + (p.name ? ` (${p.name})` : "")).join(", ")}` : "No serial ports found on this computer."}
+      </div>
     </div>
   );
 }

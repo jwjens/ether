@@ -316,6 +316,15 @@ contextBridge.exposeInMainWorld("ether", {
     // A Sweepers dropdown changed: re-place the station's pending sweepers by the assignments as they now stand.
     replaceSweepers: (stationId) => ipcRenderer.invoke("sweepers:replace", stationId),
   },
+  // Settings → Broadcast → Stream Metadata Outputs (electron/metadata-dispatcher.js) — per station, on this computer.
+  metadata: {
+    listTargets:  (stationId)                         => ipcRenderer.invoke("metadata:list-targets", stationId),
+    addTarget:    (t)                                 => ipcRenderer.invoke("metadata:add-target", t),
+    updateTarget: (t)                                 => ipcRenderer.invoke("metadata:update-target", t),
+    deleteTarget: (id)                                => ipcRenderer.invoke("metadata:delete-target", { id }),
+    testTarget:   (id)                                => ipcRenderer.invoke("metadata:test-target", { id }),
+    serialPorts:  ()                                  => ipcRenderer.invoke("metadata:serial-ports"),
+  },
   // Show+ DAW → deck: the rendered WAV is written and loaded on deck A/B/C by main (electron/showplus-send.js).
   showplus: {
     sendToDeck: (deck, wav, stationId) => ipcRenderer.invoke("showplus:send-to-deck", { deck, wav, stationId }),
