@@ -87,3 +87,17 @@ ready`). In Settings → Broadcast added two test outputs on HalloVeen: a webhoo
 - **UNVERIFIED from another device:** a request to this computer's network address (192.168.0.114:4242) timed out —
   most likely Windows Firewall holding the first-run "allow on networks" prompt for the dev `electron.exe`. Not
   changed by me. One check settles it: allow the prompt (private networks), then open the address on a phone.
+
+## After Jeff's decisions (same day, restart at 11:44 local)
+
+- **Port from the station's own setting:** Stream Manager shows an editable **Port** = 8000 (halloVeen's
+  `icecast_port`), "Sending to 44.244.52.207:8000/halloween" (shot 39).
+- **Why this song:** real halloVeen rows read "Movie & TV Instrumentals: the song that waited longest of 5 that met
+  every rule" and "Closing: no song met the rules, so the least recently played song went in · STRICT rule broken as the
+  last resort: same song (3.5 of 60 min)".
+- **Song Analysis → Reset:** Ether's confirm window: "Clear the loudness and BPM measurements of this station's songs?
+  They are measured again by Analyze all songs." — answered Cancel, nothing cleared (shot 40).
+- **UNVERIFIED on screen:** Cue Editor keys after a waveform click (needs the Cue Editor on a song); Show+ DAW Load
+  session (native Open window). Both unit-tested.
+- Startup note: this restart logged "daemon not connected" for the first engine polls (the known cold-start race,
+  memory "Cold-stage daemon race"); not changed today.
