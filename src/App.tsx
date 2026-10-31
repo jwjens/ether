@@ -3034,6 +3034,7 @@ export default function App() {
                   { key: "po-decks",       emoji: "🎚", label: "Decks",              panel: "decks" },
                   { key: "po-processor",   emoji: "🎛", label: "Processor",          panel: "processor" },
                   { key: "po-shows",       emoji: "🎙", label: "Shows",              panel: "shows" },
+                  { key: "po-voicetrack",  emoji: "🎤", label: "Voice Tracker",      panel: "voicetrack" },
                   { key: "po-categories",  emoji: "🏷", label: "Categories",         panel: "categories" },
                   { key: "po-jukebox",     emoji: "🕹", label: "Jukebox",            panel: "jukebox" },
                   { key: "po-videostudio", emoji: "🎥", label: "Show+",              panel: "videostudio" },

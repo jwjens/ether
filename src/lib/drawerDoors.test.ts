@@ -53,3 +53,13 @@ describe("the ☰ menu is a door to Stream Manager (Jeff, 2026-10-30)", () => {
     expect(main).toMatch(new RegExp(`"streaming":\\s*"${e?.label}"`));
   });
 });
+
+describe("the ☰ menu is a door to Voice Tracker (Jeff, 2026-10-31)", () => {
+  const main = fs.readFileSync(path.join(__dirname, "..", "..", "electron", "main.js"), "utf8");
+  it("the ☰ entry opens the same pop-out as Menu → Voice Tracker, under that pop-out's title", () => {
+    expect(main).toMatch(/label: "Voice Tracker", click: \(\) => menuNav\("nav:voicetrack", "voicetrack"\)/);
+    const e = entries.find(x => x.key === "po-voicetrack");
+    expect(e?.panel).toBe("voicetrack");
+    expect(main).toMatch(new RegExp(`"voicetrack":\\s*"${e?.label}"`));
+  });
+});

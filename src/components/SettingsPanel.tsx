@@ -33,6 +33,7 @@ import { ProcessingTrio, dbfsPct } from "./ProcessingMeters";
 import { fetchMyMemberships, type Membership } from "../lib/memberships";
 import { PAGE_TYPES } from "../lib/publicPages";
 import { listenerPageUrl } from "../lib/listenerPage";
+import { getVtMic, setVtMic } from "../lib/vtMic";
 import { useAccountLinks, LinkRows } from "./PublicLinks";
 
 // ── Settings categories ──────────────────────────────────────
@@ -2512,7 +2513,9 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
   // Audio devices
   const [devices, setDevices] = useState<{ deviceId: string; label: string; kind: string }[]>([]);
-  const [currentInput, setCurrentInput] = useState("");
+  // Voice-tracking mic: saved on this computer and used by Voice Tracker (src/lib/vtMic.ts).
+  const [currentInput, setCurrentInput] = useState<string>(() => getVtMic());
+  const selectVtMic = (id: string) => { setCurrentInput(id); setVtMic(id); };
   // Phone hybrid input — set once here, used by PhoneDesk (never touched on the working panel).
   const [phoneInput, setPhoneInput] = useState<string>(() => { try { return localStorage.getItem("ether_phone_input") || ""; } catch { return ""; } });
   const selectPhoneInput = (id: string) => { setPhoneInput(id); try { localStorage.setItem("ether_phone_input", id); } catch { /* ignore */ } };
@@ -3182,7 +3185,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {inputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No microphones found</div> :
                 inputs.map(d => (
-                  <button key={d.deviceId} onClick={() => setCurrentInput(d.deviceId)} style={{
+                  <button key={d.deviceId} onClick={() => selectVtMic(d.deviceId)} style={{
                     padding: "9px 12px", borderRadius: 0, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
                     background: currentInput === d.deviceId ? "rgba(52,211,153,0.12)" : "var(--bg-tertiary)",
                     border: "1px solid " + (currentInput === d.deviceId ? "var(--accent-green)" : "var(--border-primary)"),

@@ -1,6 +1,7 @@
 import { etherConfirm } from "../lib/etherConfirm";
 import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { getVtMic, openVtMic } from "../lib/vtMic";
 import { audioLibraryDir } from "../lib/fileLocation";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
@@ -390,6 +391,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
   // Recording
   const [recording, setRecording]   = useState(false);
+  const [micNote, setMicNote]       = useState("");
   const [recordTime, setRecordTime] = useState(0);
   const [djName, setDjName]         = useState("DJ");
   const [trackTitle, setTrackTitle] = useState("");
@@ -596,8 +598,9 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   // ── Recording ──
   const startRecording = async () => {
     try {
-      const constraints = inputDeviceId ? { audio: { deviceId: { exact: inputDeviceId } } } : { audio: true };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      // The mic picked in Settings → Audio → Voice-tracking microphone (src/lib/vtMic.ts); the default mic if it's gone.
+      const { stream, fellBack } = await openVtMic(inputDeviceId || getVtMic(), c => navigator.mediaDevices.getUserMedia(c));
+      setMicNote(fellBack ? "The voice-tracking mic picked in Settings isn't connected — recording from the default mic." : "");
       const ctx = new AudioContext(); audioCtxRef.current = ctx;
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser(); analyser.fftSize = 512;
@@ -1130,6 +1133,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
             }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: recording ? "#160a0c" : "var(--accent-red)", display: "inline-block" }} />REC
             </button>
+            {micNote && <span role="status" style={{ alignSelf: "center", padding: "0 10px", fontSize: 11, color: "#fbbf24" }}>{micNote}</span>}
             {/* Play */}
             <button onClick={() => { const t = tracks[0]; if (t) playTrack(t); }} disabled={tracks.length === 0 || recording} title="Play latest" style={{
               width: 38, borderRadius: 0, cursor: tracks.length && !recording ? "pointer" : "default",
