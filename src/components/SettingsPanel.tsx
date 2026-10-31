@@ -3330,19 +3330,9 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
         <RemoteLinkSettings />
       </Section>
 
-      <Section category="broadcast" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>} title="Remote Access & Website" description="Control Ether from your phone, or show what's playing on your website">
+      <Section category="broadcast" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>} title="Remote Access & Website" description="Control Ether from a phone on this computer's network, and read what's playing from a page on the same network">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Mobile remote control</div>
-            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 8 }}>Open this on any phone or tablet connected to the same WiFi — no app needed</div>
-            {dashboardUrl && <CodeBox value={dashboardUrl} />}
-          </div>
-          <div style={{ borderTop: "1px solid var(--border-primary)", paddingTop: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Now playing for your website</div>
-            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 8 }}>Your website can fetch this URL every 10 seconds to show the current song automatically</div>
-            {dashboardUrl && <CodeBox value={dashboardUrl + "/now-playing.json"} />}
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>Returns: song title, artist, whether it's playing, and a timestamp</div>
-          </div>
+          <RemoteAccessBody dashboardUrl={dashboardUrl} />
         </div>
       </Section>
 
@@ -4446,5 +4436,43 @@ function StationManagementSection() {
         </div>
       )}
     </Section>
+  );
+}
+
+// REMOTE ACCESS & WEBSITE (build C, electron/local-remote.js): Ether serves port 4242 on this computer's network while
+// it is open — the phone remote (behind the 6-digit code below) and /now-playing.json.
+function RemoteAccessBody({ dashboardUrl }: { dashboardUrl: string }) {
+  const [info, setInfo] = useState<{ ok: boolean; error?: string; code?: string } | null>(null);
+  const ask = () => (window as any).ether?.invoke?.("local-remote:info").then(setInfo).catch(() => setInfo({ ok: false, error: "no answer" }));
+  useEffect(() => { ask(); }, []);
+  const newCode = async () => { await (window as any).ether?.invoke?.("local-remote:new-code"); ask(); };
+  return (
+    <>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Phone remote</div>
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 8 }}>
+          Open this on a phone or tablet on the same Wi-Fi as this computer — no app needed. It shows what's playing and Up Next, with Skip, Stop all and AUTO on / off for the station you're working in.
+        </div>
+        {dashboardUrl && <CodeBox value={dashboardUrl} />}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" as const }}>
+          <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>Code the phone asks for:</span>
+          <code style={{ fontSize: 20, letterSpacing: "0.25em", color: "#c4b5fd", fontFamily: "'DM Mono', monospace" }}>{info?.code || "……"}</code>
+          <button onClick={newCode} style={{ padding: "5px 12px", fontSize: 12, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>New code</button>
+        </div>
+        <div style={{ fontSize: 12, color: info && !info.ok ? "#ef4444" : "var(--text-tertiary)", marginTop: 8 }}>
+          {info == null ? "Checking…" : info.ok ? "Ether is answering on port 4242. The first time, Windows may ask to allow Ether on your network — allow it for private networks."
+            : `Not available: ${info.error}. Another program may be using port 4242.`}
+        </div>
+      </div>
+      <div style={{ borderTop: "1px solid var(--border-primary)", paddingTop: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Now playing, on your network</div>
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 8 }}>A page on a computer or screen on the same network can read this every few seconds to show the current song.</div>
+        {dashboardUrl && <CodeBox value={dashboardUrl + "/now-playing.json"} />}
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>Returns: station, song title, artist, whether it's playing, and when the song started.</div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>
+          A public website on the internet can't reach this computer's network address. For your public website, use your station's listener page or the embed player — see <b>Your listener page</b> above and <b>Links</b>.
+        </div>
+      </div>
+    </>
   );
 }

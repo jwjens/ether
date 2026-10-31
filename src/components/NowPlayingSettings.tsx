@@ -90,17 +90,17 @@ export default function NowPlayingSettings() {
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg>
           Mobile Dashboard</div>
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Open on any phone or tablet on the same WiFi to remotely control playback:</div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Open on a phone or tablet on the same Wi-Fi as this computer (it asks for the code in Settings → Broadcast → Remote Access &amp; Website):</div>
         {dashboardUrl && <div style={{ background: "var(--bg-secondary)", borderRadius: 0, padding: "10px 14px", fontFamily: "monospace", fontSize: 14, color: "var(--accent-blue)", letterSpacing: "0.02em", wordBreak: "break-all" as any }}>{dashboardUrl}</div>}
       </div>
 
       <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-          Public Now Playing Endpoint</div>
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Your station website can poll this URL to show what's playing:</div>
+          Now Playing on your network</div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>A page on the same network as this computer can read this to show what's playing. A public website can't reach it — use your listener page or the embed player for that.</div>
         {dashboardUrl && <div style={{ background: "var(--bg-secondary)", borderRadius: 0, padding: "10px 14px", fontFamily: "monospace", fontSize: 13, color: "var(--accent-green)", letterSpacing: "0.02em" }}>{dashboardUrl}/now-playing.json</div>}
-        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>Returns: title, artist, is_playing, updated_at — CORS enabled</div>
+        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>Returns: station, title, artist, playing, updatedAt — readable from any page (CORS)</div>
       </div>
 
       <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>

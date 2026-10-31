@@ -1352,7 +1352,9 @@ export default function App() {
       };
     };
 
-    const execCmd = async (cmd: string, data: any) => {
+    // Returns what really happened (null = not run on this machine). The phone remote on this computer (Remote Access,
+    // electron/local-remote.js) runs the SAME commands through here with data._local — no ack to the web for those.
+    const execCmd = async (cmd: string, data: any): Promise<CmdOutcome | null> => {
       // SLICE 5 — no silent success. `outcome` is what really happened; `accepted` = a station-scoped command this
       // machine took (routed here, not ignored). Acked in the finally below, never awaited (web-remote §5).
       let outcome: CmdOutcome = { ok: true, error: null };
@@ -1370,14 +1372,14 @@ export default function App() {
           let localStations: { id: number; uuid: string | null }[] = [];
           try { localStations = await query<{ id: number; uuid: string | null }>("SELECT id, uuid FROM stations"); } catch { /* no rows → resolver falls back to active */ }
           const t = resolveCommandTarget(data?.station_uuid, activeId, localStations);
-          if (t.kind === "ignore") { console.log(`[RemoteCmd] ${cmd} ignored — station ${data?.station_uuid} not run on this machine`); return; }
+          if (t.kind === "ignore") { console.log(`[RemoteCmd] ${cmd} ignored — station ${data?.station_uuid} not run on this machine`); return null; }
           targetId = t.stationId;
           // Web-remote slice 3: the backend stamps target_machine_id on every station control, and only
           // the named machine acts. No target → it was never stamped → nobody acts (not every machine
           // that runs the station).
           if (!commandTargetsThisMachine(data?.target_machine_id, machineIdRef.current, cmd)) {
             console.log(`[RemoteCmd] ${cmd} ignored — targets machine ${data?.target_machine_id || "(none)"}, not this one (${machineIdRef.current})`);
-            return;
+            return null;
           }
           console.log(`[RemoteCmd] ${cmd} accepted for station ${data?.station_uuid} on this machine ${machineIdRef.current}`);
           accepted = true;
@@ -1392,7 +1394,7 @@ export default function App() {
             const r = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'park_control' AND deleted_at IS NULL", [targetId]);
             locked = r[0]?.value === "off";
           } catch { /* unreadable → not locked; the server holds the same lock */ }
-          if (locked) { refuse("Controls locked by the studio"); return; }   // acked in the finally below
+          if (locked) { refuse("Controls locked by the studio"); return outcome; }   // acked in the finally below
         }
         const activeEngine = getEngine(activeId);             // fresh active engine (replaces the stale closure `engine`)
         const useDaemon = activeEngine.isDaemonDriven;         // install-level mode — all stations share it
@@ -1834,12 +1836,23 @@ export default function App() {
       } finally {
         // SLICE 5: tell the web what really happened. Only for a station-scoped command this machine accepted —
         // an ignored command is not ours to answer. Fire-and-forget: the ack can never hold up playout.
-        if (accepted) {
+        if (accepted && !data?._local) {
           console.log(`[RemoteCmd] ${cmd} -> ack ${outcome.ok ? "ok" : `FAILED — ${outcome.error}`}`);
           void postCmdAck(fetch, `${ETHER_BACKEND_URL}/api/cmd/ack`, apiKeyRef.current, ackBody(data, machineIdRef.current, outcome));
         }
       }
+      return outcome;
     };
+
+    // The phone remote on this computer's network (Settings → Remote Access & Website): main asks, this runs the command
+    // for the active station on this machine and answers with the outcome.
+    const etherIpc = (window as any).ether;
+    const onLocalCmd = etherIpc?.on?.("local-remote:cmd", async (p: { id: number; cmd: string }) => {
+      let out: CmdOutcome | null = null;
+      try { out = await execCmd(p.cmd, { target_machine_id: machineIdRef.current, _local: true }); }
+      catch (e) { out = { ok: false, error: String((e as any)?.message || e) }; }
+      etherIpc?.invoke?.("local-remote:result", p.id, out ?? { ok: false, error: "not run on this computer" });
+    });
 
     let es: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1896,6 +1909,7 @@ export default function App() {
       destroyed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       es?.close();
+      if (onLocalCmd) etherIpc?.off?.("local-remote:cmd", onLocalCmd);
     };
   }, []);
 

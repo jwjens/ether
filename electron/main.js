@@ -1451,6 +1451,7 @@ if (AUDIO_DAEMON_DESIRED) {
         } catch { /* summary is best-effort */ }
       } else if (m.event === "queue") {
         sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
+        try { _remoteQueue.set(m.stationId, (m.items || []).map(q => ({ title: q?.title || "", artist: q?.artist || "" }))); } catch {}
         try { _health.noteQueue(m.stationId, m.items, m.source); } catch {}
       } else if (m.event === "enginestate") {
         // Honest engine-state truth layer (Slice 1): live | stalled | off from the daemon → renderer,
@@ -1483,6 +1484,7 @@ if (AUDIO_DAEMON_DESIRED) {
         _scheduleChanged(m.stationId, 'playstart');
         try { _health.notePlayStart(m.stationId, m.title, m.artist); } catch {}
         try { _metadataOut?.dispatch(m.stationId, { title: m.title, artist: m.artist }).catch(() => {}); } catch {}
+        _remoteNow.set(m.stationId, { title: m.title || "", artist: m.artist || "", at: Date.now() });
         // Song boundary: the cleanest moment to swap out a stale-but-healthy daemon (current song
         // just ended). The no-audio timer covers wedged/idle daemons that never reach here.
         if (_daemonReloadArmed) fireDaemonReload("song boundary");
@@ -9785,6 +9787,48 @@ try {
 } catch (e) {
   console.warn("[METADATA] install failed:", e.message);
 }
+
+// ── Remote Access & Website (build C, Jeff 2026-10-30): port 4242 on this computer's network — /now-playing.json and
+// the phone remote (Skip / Stop all / AUTO on / AUTO off, behind a 6-digit code). electron/local-remote.js.
+const _remoteNow = new Map();     // stationId → { title, artist, at } from the daemon's playstart
+const _remoteQueue = new Map();   // stationId → [{ title, artist }] from the daemon's queue event
+let _remoteState = { ok: false, error: "not started" };
+const _remotePending = new Map(); let _remoteSeq = 0;
+function _remoteCodePath() { return path.join(P.profileDir(P.activeKey()), "remote-code.txt"); }
+function _remoteCode(renew = false) {
+  try { if (!renew) { const c = fs.readFileSync(_remoteCodePath(), "utf8").trim(); if (/^\d{6}$/.test(c)) return c; } } catch {}
+  const c = require("./local-remote").newCode();
+  try { fs.writeFileSync(_remoteCodePath(), c); } catch {}
+  return c;
+}
+async function _remoteNowPlaying() {
+  const sid = getActiveStationId();
+  let station = "";
+  try { station = getDb().prepare("SELECT name FROM stations WHERE id = ?").get(sid)?.name || ""; } catch {}
+  let playing = false;
+  try {
+    const st = AUDIO_DAEMON ? await audiodClient.cmd("getState", { stationId: sid }) : JSON.parse(audio.audioGetState(sid));
+    playing = ["deckA", "deckB", "deckC"].some(k => st?.[k]?.status === "playing");
+  } catch {}
+  const np = _remoteNow.get(sid) || {};
+  return { station, title: np.title || "", artist: np.artist || "", playing, updatedAt: np.at ? new Date(np.at).toISOString() : null };
+}
+ipcMain.handle("local-remote:result", (_, id, outcome) => { const r = _remotePending.get(id); if (r) { _remotePending.delete(id); r(outcome || { ok: false, error: "no answer" }); } return true; });
+ipcMain.handle("local-remote:info", () => ({ ..._remoteState, server: undefined, port: 4242, code: _remoteCode() }));
+ipcMain.handle("local-remote:new-code", () => ({ code: _remoteCode(true) }));
+require("./local-remote").startLocalRemote({
+  nowPlaying: _remoteNowPlaying,
+  upNext: () => _remoteQueue.get(getActiveStationId()) || [],
+  code: () => _remoteCode(),
+  // The phone's commands run in the main window through the SAME handler the web dashboard remote uses (App.tsx execCmd).
+  runCmd: (cmd) => new Promise((resolve) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return resolve({ ok: false, error: "Ether's main window isn't open" });
+    const id = ++_remoteSeq;
+    _remotePending.set(id, resolve);
+    setTimeout(() => { if (_remotePending.delete(id)) resolve({ ok: false, error: "Ether didn't answer in time" }); }, 8000);
+    mainWindow.webContents.send("local-remote:cmd", { id, cmd });
+  }),
+}, { log: (m) => { try { logStartup(m); } catch {} } }).then(r => { _remoteState = r; });
 
 // ── Video engine (renderer composites; we run ffmpeg for RTMP/MP4) ─────────
 try {
