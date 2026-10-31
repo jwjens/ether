@@ -43,3 +43,13 @@ describe("the ☰ menu is a door to the EAS Logbook (Jeff, 2026-10-30)", () => {
     expect(router).toMatch(new RegExp(`"eas":\\s*"${e?.label}"`));
   });
 });
+
+describe("the ☰ menu is a door to Stream Manager (Jeff, 2026-10-30)", () => {
+  const main = fs.readFileSync(path.join(__dirname, "..", "..", "electron", "main.js"), "utf8");
+  it("the ☰ entry opens the same pop-out as Tools → Stream Manager, under that pop-out's title", () => {
+    expect(main).toMatch(/label: "Stream Manager", click: \(\) => menuNav\("nav:streaming", "streaming"\)/);
+    const e = entries.find(x => x.key === "po-streaming");
+    expect(e?.panel).toBe("streaming");
+    expect(main).toMatch(new RegExp(`"streaming":\\s*"${e?.label}"`));
+  });
+});

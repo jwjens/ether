@@ -8633,25 +8633,39 @@ ipcMain.handle("watchdog_set", (_, args) => {
   return audio.watchdogSet(active ?? false, thresholdSec ?? 30);
 });
 
-// -- Streaming stubs (Icecast client to be implemented) -------
-let streamActive = false;
-let streamStartTime = 0;
-
-ipcMain.handle("stream_status", () => streamActive);
-
-ipcMain.handle("stream_health", () => ({
-  status: streamActive ? "live" : "disconnected",
-  uptimeSecs: streamActive ? Math.floor((Date.now() - streamStartTime) / 1000) : 0,
-  dropCount: 0,
-  bufferSecs: 0,
-}));
-
-ipcMain.handle("stream_start", async (_, args) => {
-  console.log("[STREAM] Start requested:", args?.config);
-  streamActive = true;
-  streamStartTime = Date.now();
-  return true;
+// -- Tools → Stream Manager: the REAL stream (electron/stream-manager.js) -------
+// These three used to be stubs that set a flag and invented an uptime. They now read and drive the one real stream
+// ON AIR runs, for the given station (default: the active one).
+async function streamManagerStatus(stationId) {
+  const SM = require("./stream-manager");
+  const sid = stationId ?? getActiveStationId();
+  const station = getDb().prepare("SELECT * FROM stations WHERE id=? AND deleted_at IS NULL").get(sid);
+  let src = null;
+  if (AUDIO_DAEMON) { try { src = await audiodClient.cmd("streamStatus", { stationId: sid }); } catch { src = null; } }
+  else src = _stationStreams.get(sid) || null;
+  return { settings: SM.settingsOf(station), ...SM.statusOf(src) };
+}
+ipcMain.handle("stream-manager:status", (_, stationId) => streamManagerStatus(stationId));
+ipcMain.handle("stream-manager:listeners", async (_, stationId) => {
+  const SM = require("./stream-manager");
+  const st = SM.settingsOf(getDb().prepare("SELECT * FROM stations WHERE id=? AND deleted_at IS NULL").get(stationId ?? getActiveStationId()));
+  return st ? SM.fetchListeners({ server: st.server, mount: st.mount }) : { ok: false, error: "no station" };
 });
+// Saves only the four stream fields go-live reads, on the station row (the same row Station Manager edits).
+ipcMain.handle("stream-manager:save", (_, stationId, edit) => {
+  try {
+    const patch = require("./stream-manager").patchFrom(edit || {});
+    if (!Object.keys(patch).length) return { ok: true };
+    require("./sync/handlers/stations").stationsUpdateById(getDb(), stationId ?? getActiveStationId(), patch);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("stream_status", async () => (await streamManagerStatus()).state === "live");
+ipcMain.handle("stream_health", async () => {
+  const s = await streamManagerStatus();
+  return { status: s.state, uptimeSecs: s.uptimeSec, errorMsg: s.errorMsg };
+});
+ipcMain.handle("stream_start", () => streamGoLive({}));
 
 ipcMain.handle("stream_update_metadata", (_, args) => {
   console.log("[STREAM] Metadata:", args?.title, "-", args?.artist);
@@ -13504,7 +13518,8 @@ function _spawnStream(stationId, args, label) {
   console.log(`[stream/${stationId}] → ${label}`);
 }
 
-ipcMain.handle('stream:go-live', async (_, args = {}) => {
+// THE ONE REAL STREAM START. Two doors: ON AIR (stream:go-live) and Tools → Stream Manager (stream_start).
+async function streamGoLive(args = {}) {
   try {
     // Item 10 Phase 2 Step 5: when the daemon owns the engine, the program bus lives in the
     // daemon — so the encoder runs there too (and survives a UI restart). Resolve the Icecast
@@ -13560,9 +13575,10 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
   } catch (e) {
     return { ok: false, error: e.message };
   }
-});
+}
+ipcMain.handle('stream:go-live', (_, args = {}) => streamGoLive(args));
 
-ipcMain.handle('stream:stop-live', async (_, args = {}) => {
+async function streamStopLive(args = {}) {
   const stationId = args.stationId ?? getActiveStationId();
   if (AUDIO_DAEMON) {
     _streamIntent.delete(stationId);   // Phase D (e): operator stopped the stream → don't auto-replay it
@@ -13578,7 +13594,8 @@ ipcMain.handle('stream:stop-live', async (_, args = {}) => {
     mainWindow.webContents.send('stream:status', { stationId, live: false });
   }
   return { ok: true, stationId };
-});
+}
+ipcMain.handle('stream:stop-live', (_, args = {}) => streamStopLive(args));
 
 ipcMain.handle('stream:get-status', (_, args = {}) => {
   if (args?.stationId != null) {
