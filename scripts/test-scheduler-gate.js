@@ -903,6 +903,7 @@ function staticChecks() {
     [/^electron[\/]generate-core\.js$/, /SPOT_SELECT|FROM spots|\bsp\.last_played_at|length_sec, last_played_at, max_plays_day/, "spots.last_played_at (spot rotation)"],
     [/^electron[\/]main\.js$/, /ALTER TABLE songs ADD COLUMN last_played_at|announcement|row\.last_played_at|s\.last_played_at AS last_played_at/, "the column's creation, and announcements / announcement_schedule"],
     [/^audiod[\/]playlog\.js$/, /UPDATE spots/, "spots accounting"],
+    [/^electron[\/]announce-fire\.js$/, /row\.last_played_at/, "announcement_schedule.last_played_at (the line's last fire — moved out of main.js on 2026-10-26)"],
     [/^src[\/]components[\/]Announcements\.tsx$/, null, "announcement_schedule lines"],
     [/^src[\/]lib[\/]ccData\.ts$/, null, "announcement_schedule lines (the Park page's mirror)"],
   ];
