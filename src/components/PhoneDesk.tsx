@@ -30,6 +30,10 @@ const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any)
 import { DeckId } from "../audio/engine-rodio";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { localDestination } from "../audio/localOutput";
+import { useActiveStation } from "../hooks/useActiveStation";
+import { importIntoAudioLibrary } from "../lib/fileLocation";
+import { sendClipToCart } from "../lib/phoneClipCart";
+import { CART_SLOT_COUNT } from "./DeckConfigurator";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -392,6 +396,20 @@ function WaveformView({
 
 export default function PhoneDesk({ onClose }: Props) {
   const engine = useAudioEngine();
+  const { stationId: phoneStationId } = useActiveStation();
+  // CART: the first empty cart on this station's wall, through the wall's own upsert (src/lib/phoneClipCart.ts). The
+  // 'ether:phone-clip' event this used to fire had no listener, so a clip sent to CART went nowhere.
+  const toCart = async (filePath: string, title: string) => {
+    const r = await sendClipToCart(filePath, title, {
+      stationId: phoneStationId ?? null, total: CART_SLOT_COUNT,
+      list: (sid) => (window as any).ether.cartSlots.list(sid),
+      importIntoLibrary: (fp) => importIntoAudioLibrary(fp),
+      upsert: (sid, slot, payload) => (window as any).ether.cartSlots.upsertBySlotNumber(sid, slot, payload),
+      notify: () => window.dispatchEvent(new CustomEvent("ether:cart-slots-changed")),
+    });
+    if (!r.ok) throw new Error(r.message);
+    return r;
+  };
   // Input mode
   const [inputMode, setInputMode]   = useState<InputMode>("device");
   const [devices, setDevices]       = useState<AudioDevice[]>([]);
@@ -463,16 +481,10 @@ export default function PhoneDesk({ onClose }: Props) {
 
   // ── Load devices on mount ──
   useEffect(() => {
-    invoke<AudioDevice[]>("get_audio_devices")
-      .then(devs => {
-        const inputs = devs.filter((d: any) => d.is_input !== false);
-        setDevices(inputs);
-        let saved = ""; try { saved = localStorage.getItem("ether_phone_input") || ""; } catch { /* ignore */ }
-        const def = inputs.find(d => d.id === saved) || inputs.find(d => d.is_default) || inputs[0];
-        if (def) setSelectedDevice(def.id);
-      })
-      .catch(() => {
-        // Fallback: use Web Audio device enumeration
+    // THE BROWSER'S INPUT LIST — the devices this desk records from (getUserMedia by deviceId). It used to ask main for
+    // "get_audio_devices", which has no handler, so every open failed first and then fell back to this same list.
+    Promise.resolve()
+      .then(() => {
         navigator.mediaDevices.enumerateDevices().then(devs => {
           const inputs = devs.filter(d => d.kind === "audioinput");
           setDevices(inputs.map(d => ({ id: d.deviceId, name: d.label || d.deviceId.slice(0, 16), is_default: d.deviceId === "default" })));
@@ -757,8 +769,7 @@ export default function PhoneDesk({ onClose }: Props) {
       const artist = "Phone";
 
       if (sendTarget === "cart") {
-        // Dispatch a custom event — CartWall listens for this to add a hot button
-        window.dispatchEvent(new CustomEvent("ether:phone-clip", { detail: { filePath, title } }));
+        await toCart(filePath, title);
       } else {
         await engine.loadToDeck(sendTarget as DeckId, filePath, title, artist);
       }
@@ -792,7 +803,7 @@ export default function PhoneDesk({ onClose }: Props) {
       const res = await (window as any).ether.ffmpeg.writeAudio(bytes, filePath);
       if (!res?.ok) throw new Error(res?.error ?? "writeAudio failed");
       const title = `Phone Clip ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-      if (target === "cart") window.dispatchEvent(new CustomEvent("ether:phone-clip", { detail: { filePath, title } }));
+      if (target === "cart") await toCart(filePath, title);
       else await engine.loadToDeck(target as DeckId, filePath, title, "Phone");
     } catch (e) { console.error("[PhoneDesk] send failed:", e); alert("Send failed: " + String(e)); }
   };

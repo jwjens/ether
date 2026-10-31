@@ -765,6 +765,13 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   const playingChannelsRef = useRef<string[]>([]);
 
   const [carts, setCarts] = useState<CartSlot[]>(defaultCarts);
+  // A cart written from outside the wall (Phone Desk → send to CART, src/lib/phoneClipCart.ts) reloads it.
+  const [slotsRev, setSlotsRev] = useState(0);
+  useEffect(() => {
+    const on = () => setSlotsRev(v => v + 1);
+    window.addEventListener("ether:cart-slots-changed", on);
+    return () => window.removeEventListener("ether:cart-slots-changed", on);
+  }, []);
 
   // ── PERSISTENCE (2026-07-31) ────────────────────────────────────────────────────────────────────
   // Before this, the wall lived entirely in React state seeded from a constant: every assignment died
@@ -793,7 +800,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
       } catch { /* IPC absent (dev/browser) — the in-memory default wall still works */ }
     })();
     return () => { stop = true; };
-  }, [stationId]);
+  }, [stationId, slotsRev]);
 
   /** Write one slot through the SAME upsert the Producer Desk already uses. Best-effort: a failed save
    *  must never swallow the operator's action — the tile still updates and the console says why. */
