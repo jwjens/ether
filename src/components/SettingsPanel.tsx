@@ -34,6 +34,7 @@ import { fetchMyMemberships, type Membership } from "../lib/memberships";
 import { PAGE_TYPES } from "../lib/publicPages";
 import { listenerPageUrl } from "../lib/listenerPage";
 import { getVtMic, setVtMic } from "../lib/vtMic";
+import { streamHostPort } from "../lib/streamPort";
 import { useAccountLinks, LinkRows } from "./PublicLinks";
 
 // ── Settings categories ──────────────────────────────────────
@@ -564,7 +565,7 @@ function CloudPlayoutSection() {
   const [playoutServer,  setPlayoutServer]  = useState(DEFAULT_PLAYOUT_SERVER);
   const [editingServer,  setEditingServer]  = useState(false);
   const [serverDraft,    setServerDraft]    = useState('');
-  const [stations,       setStations]       = useState<Array<{ id: number; name: string; icecast_mount: string; icecast_server_url?: string; }>>([]);
+  const [stations,       setStations]       = useState<Array<{ id: number; name: string; icecast_mount: string; icecast_server_url?: string; icecast_port?: number | null; }>>([]);
   const [stationStreams,  setStationStreams]  = useState<Record<number, { live: boolean; error?: string | null }>>({});
   // Real-time per-destination stream status (same source as the Icecast pill) — so a stream
   // started anywhere (e.g. the dashboard ON AIR button) reflects here, not just panel-started ones.
@@ -599,7 +600,10 @@ function CloudPlayoutSection() {
   const checkStatus = async () => {
     setChecking(true);
     try {
-      const res = await fetch(`http://${playoutServer}:8000/`, { signal: AbortSignal.timeout(4000) });
+      // The server's port: written in its address, else the port of a station that streams to it (no fixed 8000).
+      const hp = streamHostPort(playoutServer, stations.find(s => streamHostPort(s.icecast_server_url || "", null).host === streamHostPort(playoutServer, null).host)?.icecast_port);
+      if (!hp.port) { setIcecastUp(false); return; }
+      const res = await fetch(`http://${hp.host}:${hp.port}/`, { signal: AbortSignal.timeout(4000) });
       setIcecastUp(res.ok || res.status === 200 || res.status === 403);
     } catch {
       setIcecastUp(false);
@@ -616,7 +620,7 @@ function CloudPlayoutSection() {
     setStationStreams(prev => ({ ...prev, [stationId]: { ...prev[stationId], live: false, error: null } }));
     const res = await doGoLive(stationId);
     if (res.ok) {
-      setSyncMsg(`✓ Streaming → ${res.server}:8000${res.mount}`);
+      setSyncMsg(`✓ Streaming → ${res.server}${res.port ? ":" + res.port : ""}${res.mount}`);
     } else {
       setSyncMsg('✗ ' + (res.error || 'Failed to start stream'));
     }
@@ -682,7 +686,8 @@ function CloudPlayoutSection() {
         const destState = streamCtx.dests[`icecast:${station.id}`]?.state;
         const isLive = !!stationStreams[station.id]?.live || destState === "live" || destState === "connecting";
         const serverUrl = station.icecast_server_url?.trim() || playoutServer;
-        const listenerUrl = `http://${serverUrl}:8000${station.icecast_mount}`;
+        const lhp = streamHostPort(serverUrl, station.icecast_port);   // the station's own port
+        const listenerUrl = lhp.port ? `http://${lhp.host}:${lhp.port}${station.icecast_mount}` : `(set this station's port in Stream Manager)`;
         return (
           <div key={station.id} style={{ marginBottom: 10, padding: "12px 14px", background: "var(--bg-secondary)", border: `1px solid ${isLive ? "rgba(34,197,94,0.3)" : "var(--border-primary)"}` }}>
             {/* Station header */}

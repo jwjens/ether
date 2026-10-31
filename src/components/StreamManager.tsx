@@ -7,7 +7,7 @@ import { listenerPageUrl } from "../lib/listenerPage";
 // own; listeners come from the Icecast server's status page. electron/stream-manager.js.
 const ether = () => (window as any).ether;
 
-interface Settings { stationId: number; stationUuid: string | null; stationName: string; server: string; mount: string; bitrateKbps: number; hasPassword: boolean; port: number }
+interface Settings { stationId: number; stationUuid: string | null; stationName: string; server: string; mount: string; bitrateKbps: number; hasPassword: boolean; port: number | null }
 interface Status { settings: Settings | null; state: "idle" | "connecting" | "live" | "error"; errorMsg: string | null; uptimeSec: number | null; bitrateKbps: number | null }
 type Listeners = { ok: true; listeners: number | null } | { ok: false; error: string } | null;
 
@@ -22,7 +22,7 @@ const input = { padding: "8px 12px", borderRadius: 0, fontSize: 13, background: 
 
 export default function StreamManager() {
   const [status, setStatus] = useState<Status | null>(null);
-  const [edit, setEdit] = useState<{ server: string; mount: string; password: string; bitrateKbps: number } | null>(null);
+  const [edit, setEdit] = useState<{ server: string; port: string; mount: string; password: string; bitrateKbps: number } | null>(null);
   const [listeners, setListeners] = useState<Listeners>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -33,7 +33,7 @@ export default function StreamManager() {
       setStatus(s);
       // The form follows the station until the operator starts typing (or the station changes).
       setEdit(e => (e && s.settings && (e as any)._for === s.settings.stationId) ? e
-        : s.settings ? Object.assign({ server: s.settings.server, mount: s.settings.mount, password: "", bitrateKbps: s.settings.bitrateKbps }, { _for: s.settings.stationId }) : null);
+        : s.settings ? Object.assign({ server: s.settings.server, port: s.settings.port != null ? String(s.settings.port) : "", mount: s.settings.mount, password: "", bitrateKbps: s.settings.bitrateKbps }, { _for: s.settings.stationId }) : null);
     } catch { /* main not answering: keep the last status */ }
   }, []);
 
@@ -69,7 +69,7 @@ export default function StreamManager() {
 
   const save = async () => {
     if (!edit || stationId == null) return;
-    const r = await ether().invoke("stream-manager:save", stationId, { server: edit.server, mount: edit.mount, password: edit.password, bitrateKbps: edit.bitrateKbps });
+    const r = await ether().invoke("stream-manager:save", stationId, { server: edit.server, port: edit.port.trim(), mount: edit.mount, password: edit.password, bitrateKbps: edit.bitrateKbps });
     setMsg(r?.ok ? (live ? "Saved. The stream uses the new settings the next time it starts." : "Saved.") : `Could not save: ${r?.error}`);
     setEdit(null);   // re-read from the station
     refresh();
@@ -112,7 +112,7 @@ export default function StreamManager() {
         {status.errorMsg && <div style={{ marginTop: 8, fontSize: 12, color: "#ef4444" }}>{status.errorMsg}</div>}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 12 }}>
           {[
-            { label: "Sending to", value: st.server ? `${st.server}:${st.port}${st.mount}` : "no server set" },
+            { label: "Sending to", value: !st.server ? "no server set" : st.port == null ? `${st.server} — no port set` : `${st.server}:${st.port}${st.mount}` },
             { label: "Bitrate", value: live && status.bitrateKbps != null ? `${Math.round(status.bitrateKbps)} kbps` : `${st.bitrateKbps} kbps (set)` },
             { label: "Listeners", value: !live ? "—" : listeners == null ? "asking…" : listeners.ok ? (listeners.listeners == null ? "mount not on server" : String(listeners.listeners)) : "unknown" },
           ].map(({ label, value }) => (
@@ -143,7 +143,7 @@ export default function StreamManager() {
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Icecast server for this station</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 8 }}>
           <input aria-label="Server" value={edit.server} onChange={e => setEdit({ ...edit, server: e.target.value })} placeholder="stream.example.com" style={input} />
-          <div title="Ether sends to port 8000" style={{ ...input, width: 80, color: "var(--text-tertiary)" }}>:{st.port}</div>
+          <input aria-label="Port" inputMode="numeric" value={edit.port} onChange={e => setEdit({ ...edit, port: e.target.value.replace(/[^0-9]/g, "") })} placeholder="port" title="This station's port on the server" style={{ ...input, width: 90 }} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
           <input aria-label="Mount" value={edit.mount} onChange={e => setEdit({ ...edit, mount: e.target.value })} placeholder="/live" style={input} />

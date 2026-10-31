@@ -34,7 +34,7 @@ It shows:
 ## Use it
 
 1. Open **☰ → Stream Manager**. It shows the station you are working in.
-2. To change the stream settings, edit **Server**, **Mount**, **Password** and **Bitrate**, then click **Save
+2. To change the stream settings, edit **Server**, **Port**, **Mount**, **Password** and **Bitrate**, then click **Save
    settings**. Leave Password blank to keep the one already set. These are the same settings as Station Manager; there
    is only one set.
 3. Click **▶ Start streaming** to go on air, or **⏹ Stop streaming** to stop. ON AIR on the main screen changes with it.
@@ -42,8 +42,9 @@ It shows:
 ## How it behaves
 
 - Saved settings are used the next time the stream starts. If it is on air, stop and start it to switch over.
-- Ether sends to the port written in the server address (for example `stream.example.com:8443`), or to port 8000
-  when none is written.
+- Ether sends to the station's **Port** (next to Server). A port written in the server address (for example
+  `stream.example.com:8443`) is used instead. If the station has no port, the stream doesn't start and says "No port set
+  for this station. Set it in Stream Manager."
 - If the stream keeps failing, the status says ERROR with the server's own reason (for example "The server refused the
   stream (403): another computer may be sending to this mount, or the password is wrong"). Ether tries again every 30
   seconds until you press **⏹ Stop streaming**.

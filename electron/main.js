@@ -13622,14 +13622,16 @@ async function streamGoLive(args = {}) {
       const pw     = station.icecast_password?.trim()   || 'hackme';
       const mount  = station.icecast_mount?.trim()      || '/live';
       const bitrate = require("./stream-args").icecastBitrateOf(station);
-      const streamArgs = { stationId, config: { server, password: pw, mount, bitrate, sampleRate: 44100, icecastPort: 8000 } };
+      const port = require('../audiod/stream').serverAndPort(server, station.icecast_port).port;   // the station's own port
+      if (!port) return { ok: false, error: 'No port set for this station. Set it in Stream Manager.' };
+      const streamArgs = { stationId, config: { server, password: pw, mount, bitrate, sampleRate: 44100, icecastPort: station.icecast_port } };
       try { await audiodClient.cmd('startStream', streamArgs); }
       catch (e) { return { ok: false, error: 'daemon startStream failed: ' + e.message }; }
       // Phase D (e): record stream intent HERE (this is the real start path — the audio:daemon bridge
       // is bypassed), so a daemon reload replays startStream and streams auto-restore instead of dead air.
       _streamIntent.set(stationId, streamArgs);
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:status', { stationId, live: true, server, mount });
-      return { ok: true, server, mount, stationId };
+      return { ok: true, server, mount, port: require('../audiod/stream').serverAndPort(server, station.icecast_port).port, stationId };
     }
     const stationId = args.stationId ?? getActiveStationId();
     const station   = db.prepare("SELECT * FROM stations WHERE id=?").get(stationId);
@@ -13642,7 +13644,8 @@ async function streamGoLive(args = {}) {
     const pw     = station.icecast_password?.trim()   || 'hackme';
     const mount  = station.icecast_mount?.trim()      || '/live';
     const state  = _getStreamState(stationId);
-    const sp = require('../audiod/stream').serverAndPort(server);   // the port written in the address, else 8000
+    const sp = require('../audiod/stream').serverAndPort(server, station.icecast_port);   // the station's own port
+    if (!sp.port) return { ok: false, error: 'No port set for this station. Set it in Stream Manager.' };
     state.url       = `icecast://source:${pw}@${sp.host}:${sp.port}${mount}`;
     state.destLabel = `Icecast @ ${server}${mount}`;
     state.armed     = true;
@@ -13661,7 +13664,7 @@ async function streamGoLive(args = {}) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('stream:status', { stationId, live: true, server, mount });
     }
-    return { ok: true, server, mount, stationId };
+    return { ok: true, server, mount, port: require('../audiod/stream').serverAndPort(server, station.icecast_port).port, stationId };
   } catch (e) {
     return { ok: false, error: e.message };
   }

@@ -60,12 +60,13 @@ function songText(payload) {
 function resolveIcecast(cfg, station) {
   if (!cfg.useStationStream) return cfg;
   if (!station || !String(station.icecast_server_url || "").trim()) throw new Error("this station has no stream server set (Stream Manager)");
-  const sp = require("../audiod/stream").serverAndPort(station.icecast_server_url);   // its own port, else 8000
+  const sp = require("../audiod/stream").serverAndPort(station.icecast_server_url, station.icecast_port);   // the station's own port
+  if (!sp.port) throw new Error("this station has no port set (Stream Manager)");
   return { host: sp.host, port: sp.port, mount: station.icecast_mount || "/stream",
            adminUser: "source", adminPass: station.icecast_password || "", useHttps: false };
 }
 function stationRow(stationId) {
-  try { return getDb()?.prepare("SELECT icecast_server_url, icecast_mount, icecast_password FROM stations WHERE id = ?").get(stationId) || null; }
+  try { return getDb()?.prepare("SELECT icecast_server_url, icecast_port, icecast_mount, icecast_password FROM stations WHERE id = ?").get(stationId) || null; }
   catch { return null; }
 }
 
@@ -120,7 +121,8 @@ function httpRequest(urlString, opts = {}) {
 // Icecast 2 admin API. Config: { host, port, mount, adminUser, adminPass, useHttps }
 async function pushIcecast(cfg, payload) {
   const protocol = cfg.useHttps ? "https" : "http";
-  const port = cfg.port || 8000;
+  const port = cfg.port;
+  if (!port) throw new Error("no port set for this output");
   const mount = cfg.mount?.startsWith("/") ? cfg.mount : "/" + (cfg.mount || "stream");
   const song = songText(payload);
   const url = `${protocol}://${cfg.host}:${port}/admin/metadata?mount=${encodeURIComponent(mount)}&mode=updinfo&song=${encodeURIComponent(song)}`;
@@ -133,7 +135,8 @@ async function pushIcecast(cfg, payload) {
 // Shoutcast v1 (sid=1, admin.cgi). Config: { host, port, password, sid, version }
 // Version 2 uses a different endpoint but the metadata mode is similar.
 async function pushShoutcast(cfg, payload) {
-  const port = cfg.port || 8000;
+  const port = cfg.port;
+  if (!port) throw new Error("no port set for this output");
   const sid  = cfg.sid  || 1;
   const song = songText(payload);
   let url;

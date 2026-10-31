@@ -52,8 +52,8 @@ const TYPE_COLOR: Record<TargetType, string> = {
 
 // Empty config defaults per type — used when adding a new target.
 const DEFAULT_CONFIG: Record<TargetType, any> = {
-  icecast:   { useStationStream: true, host: "", port: 8000, mount: "/stream", adminUser: "admin", adminPass: "", useHttps: false },
-  shoutcast: { host: "localhost", port: 8000, sid: 1, password: "", version: 2 },
+  icecast:   { useStationStream: true, host: "", port: null, mount: "/stream", adminUser: "admin", adminPass: "", useHttps: false },
+  shoutcast: { host: "", port: null, sid: 1, password: "", version: 2 },
   tunein:    { partnerId: "", partnerKey: "", stationId: "" },
   rds:       { port: "COM3", baud: 9600, encoderType: "inovonics" },
   webhook:   { url: "https://example.com/now-playing", method: "POST", basicUser: "", basicPass: "" },
@@ -278,7 +278,7 @@ function TargetEditor({ initial, onClose, onSave }: {
           {!cfg.useStationStream && <>
           <Field label="Server host"><input value={cfg.host || ""} onChange={e => setField("host", e.target.value)} placeholder="stream.example.com" style={inputStyle} /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Field label="Port"><input type="number" value={cfg.port || 8000} onChange={e => setField("port", parseInt(e.target.value || "8000", 10))} style={inputStyle} /></Field>
+            <Field label="Port"><input type="number" value={cfg.port ?? ""} placeholder="port" onChange={e => setField("port", e.target.value ? parseInt(e.target.value, 10) : null)} style={inputStyle} /></Field>
             <Field label="Mount point"><input value={cfg.mount || "/stream"} onChange={e => setField("mount", e.target.value)} style={inputStyle} /></Field>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -296,7 +296,7 @@ function TargetEditor({ initial, onClose, onSave }: {
         {initial.type === "shoutcast" && <>
           <Field label="Server host"><input value={cfg.host || ""} onChange={e => setField("host", e.target.value)} placeholder="stream.example.com" style={inputStyle} /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-            <Field label="Port"><input type="number" value={cfg.port || 8000} onChange={e => setField("port", parseInt(e.target.value || "8000", 10))} style={inputStyle} /></Field>
+            <Field label="Port"><input type="number" value={cfg.port ?? ""} placeholder="port" onChange={e => setField("port", e.target.value ? parseInt(e.target.value, 10) : null)} style={inputStyle} /></Field>
             <Field label="Stream ID (sid)"><input type="number" value={cfg.sid || 1} onChange={e => setField("sid", parseInt(e.target.value || "1", 10))} style={inputStyle} /></Field>
             <Field label="Version">
               <select value={cfg.version || 2} onChange={e => setField("version", parseInt(e.target.value, 10))} style={inputStyle}>

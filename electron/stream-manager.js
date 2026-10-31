@@ -8,7 +8,7 @@
 //   - listeners come from the Icecast server's own status page for that mount.
 // Nothing here invents a value: what is not known is null and the screen says so.
 
-const ICECAST_PORT = 8000;        // go-live pushes to :8000 (main.js stream:go-live; the port setting is item 39)
+// No fixed port: each station's own (stations.icecast_port), or the one written in its server address.
 const LISTENERS_TIME_LIMIT_MS = 4000;
 
 /** The encoder status → what the screen shows. `src` is the daemon's status() or the in-process stream state. */
@@ -33,11 +33,11 @@ function settingsOf(station) {
     stationId: station.id,
     stationUuid: station.uuid || null,
     stationName: station.name || "",
-    server: require("../audiod/stream").serverAndPort(station.icecast_server_url).host,
+    server: require("../audiod/stream").serverAndPort(station.icecast_server_url, station.icecast_port).host,
     mount: (station.icecast_mount || "").trim(),
     bitrateKbps: SA.icecastBitrateOf(station),
     hasPassword: !!(station.icecast_password || "").trim(),
-    port: require("../audiod/stream").serverAndPort(station.icecast_server_url, ICECAST_PORT).port,
+    port: require("../audiod/stream").serverAndPort(station.icecast_server_url, station.icecast_port).port,
   };
 }
 
@@ -56,8 +56,9 @@ function listenersFor(statusJson, mount) {
 }
 
 /** Ask the Icecast server. → { ok: true, listeners } (null = the mount is not on the server) | { ok: false, error } */
-async function fetchListeners({ server, mount, port = ICECAST_PORT, fetchImpl = fetch, timeLimitMs = LISTENERS_TIME_LIMIT_MS }) {
+async function fetchListeners({ server, mount, port, fetchImpl = fetch, timeLimitMs = LISTENERS_TIME_LIMIT_MS }) {
   if (!server || !mount) return { ok: false, error: "no server or mount set" };
+  if (!port) return { ok: false, error: "no port set for this station" };
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeLimitMs);
   try {
@@ -76,7 +77,9 @@ function patchFrom(edit) {
   if (edit.mount != null) { const m = String(edit.mount).trim(); p.icecast_mount = m && !m.startsWith("/") ? "/" + m : m; }
   if (edit.bitrateKbps != null && Number.isFinite(Number(edit.bitrateKbps))) p.icecast_bitrate = Number(edit.bitrateKbps);
   if (edit.password != null && String(edit.password) !== "") p.icecast_password = String(edit.password);
+  // The station's own port (stations.icecast_port): a whole number 1–65535, or blank = not set (the stream then says so).
+  if (edit.port !== undefined) { const n = Number(edit.port); p.icecast_port = edit.port === "" || edit.port == null ? null : (Number.isInteger(n) && n > 0 && n < 65536 ? n : undefined); if (p.icecast_port === undefined) delete p.icecast_port; }
   return p;
 }
 
-module.exports = { statusOf, settingsOf, listenersFor, fetchListeners, patchFrom, ICECAST_PORT };
+module.exports = { statusOf, settingsOf, listenersFor, fetchListeners, patchFrom };

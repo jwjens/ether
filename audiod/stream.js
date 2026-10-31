@@ -37,13 +37,15 @@ function parseLine(line) {
   };
 }
 
-// THE SERVER'S OWN PORT (dead-controls item 20): a server typed with its port ("stream.example.com:8443", or a full
-// "http://host:8443/") used to become "host:8443:8000" — every stream went to port 8000. The port written in the
-// address is used; 8000 only when none is written. Shared by main (in-process path, Stream Manager, metadata).
-function serverAndPort(raw, fallback = 8000) {
+// THE STATION'S OWN PORT (dead-controls item 20; Jeff 2026-10-31: "Remove the hard-coded port 8000 everywhere; use each
+// station's own setting"). A port written in the address ("stream.example.com:8443", or "http://host:8443/") wins;
+// otherwise the station's port setting (stations.icecast_port). No port anywhere = null — the stream is refused with
+// the reason, never sent to a guessed port. Shared by main (in-process path, Stream Manager, metadata).
+function serverAndPort(raw, stationPort = null) {
   let s = String(raw || "").trim().replace(/^[a-z]+:\/\//i, "").replace(/\/.*$/, "");
   const m = s.match(/^(.*):(\d{1,5})$/);
-  return m ? { host: m[1], port: parseInt(m[2], 10) } : { host: s, port: fallback };
+  const own = Number(stationPort);
+  return m ? { host: m[1], port: parseInt(m[2], 10) } : { host: s, port: Number.isInteger(own) && own > 0 && own < 65536 ? own : null };
 }
 
 // THE REAL REASON AFTER REPEATED FAILURES (Jeff, 2026-10-31, HalloVeen check): the cooldown message used to replace the
@@ -100,7 +102,8 @@ class StreamSupervisor {
     const mount = String(config.mount || "/live").trim();
     this._sampleRate = config.sampleRate || 44100;
     this._bitrate = config.bitrate || 128;
-    const sp = serverAndPort(server, config.icecastPort || 8000);
+    const sp = serverAndPort(server, config.icecastPort);
+    if (!sp.port) { this.statusState = "error"; this.errorMsg = "No port set for this station. Set it in Stream Manager."; this._emit(); return { ok: false, error: this.errorMsg }; }
     this.url = `icecast://source:${pw}@${sp.host}:${sp.port}${mount}`;
     this.armed = true; this.failureCount = 0;
     this._spawn(port);

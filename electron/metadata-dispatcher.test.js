@@ -20,8 +20,9 @@ describe("what each output is sent", () => {
     expect(MD.songText({ title: "Station ID" })).toBe("Station ID");
   });
   it("an Icecast output on this station's stream uses Stream Manager's server, mount and source password", () => {
-    expect(MD.resolveIcecast({ useStationStream: true }, { icecast_server_url: " 44.244.52.207 ", icecast_mount: "/halloween", icecast_password: "pw" }))
+    expect(MD.resolveIcecast({ useStationStream: true }, { icecast_server_url: " 44.244.52.207 ", icecast_port: 8000, icecast_mount: "/halloween", icecast_password: "pw" }))
       .toEqual({ host: "44.244.52.207", port: 8000, mount: "/halloween", adminUser: "source", adminPass: "pw", useHttps: false });
+    expect(() => MD.resolveIcecast({ useStationStream: true }, { icecast_server_url: "h", icecast_port: null })).toThrow(/no port set/);
     expect(() => MD.resolveIcecast({ useStationStream: true }, { icecast_server_url: "" })).toThrow(/no stream server/);
     const own = { host: "h", port: 9000, mount: "/x", adminUser: "admin", adminPass: "a" };
     expect(MD.resolveIcecast(own, null)).toBe(own);

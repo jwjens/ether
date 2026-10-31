@@ -16,7 +16,7 @@ describe("Stream Manager status and settings", () => {
     expect(SM.statusOf(null).state).toBe("idle");
   });
   it("the station's own stream fields, as ON AIR reads them — the password is never sent, only whether one is set", () => {
-    const s = SM.settingsOf({ id: 2, uuid: "u-2", name: "HalloVeen", icecast_server_url: " stream.x.com ", icecast_mount: "/halloveen", icecast_password: "secret", icecast_bitrate: 192 });
+    const s = SM.settingsOf({ id: 2, uuid: "u-2", name: "HalloVeen", icecast_server_url: " stream.x.com ", icecast_port: 8000, icecast_mount: "/halloveen", icecast_password: "secret", icecast_bitrate: 192 });
     expect(s).toEqual({ stationId: 2, stationUuid: "u-2", stationName: "HalloVeen", server: "stream.x.com", mount: "/halloveen", bitrateKbps: 192, hasPassword: true, port: 8000 });
     expect(JSON.stringify(s)).not.toContain("secret");
   });
@@ -37,13 +37,14 @@ describe("listeners from the Icecast server's status page", () => {
     expect(SM.listenersFor({ icestats: { source: { listenurl: "http://h:8000/ov", listeners: 0 } } }, "/ov")).toBe(0);   // one source = an object
     expect(SM.listenersFor({ icestats: {} }, "/ov")).toBe(null);
   });
-  it("asks http://<server>:8000/status-json.xsl; failures are said, never invented", async () => {
+  it("asks http://<server>:<the station's port>/status-json.xsl; failures are said, never invented", async () => {
     let asked = "";
-    const ok = await SM.fetchListeners({ server: "stream.x.com", mount: "/ov", fetchImpl: async (u) => { asked = u; return { ok: true, json: async () => page }; } });
-    expect(asked).toBe("http://stream.x.com:8000/status-json.xsl");
+    const ok = await SM.fetchListeners({ server: "stream.x.com", mount: "/ov", port: 8100, fetchImpl: async (u) => { asked = u; return { ok: true, json: async () => page }; } });
+    expect(asked).toBe("http://stream.x.com:8100/status-json.xsl");
+    expect(await SM.fetchListeners({ server: "s", mount: "/ov", port: null })).toEqual({ ok: false, error: "no port set for this station" });
     expect(ok).toEqual({ ok: true, listeners: 12 });
-    expect(await SM.fetchListeners({ server: "s", mount: "/ov", fetchImpl: async () => ({ ok: false, status: 404 }) })).toEqual({ ok: false, error: "the server answered 404" });
-    expect((await SM.fetchListeners({ server: "s", mount: "/ov", fetchImpl: async () => { throw new Error("ECONNREFUSED"); } })).ok).toBe(false);
+    expect(await SM.fetchListeners({ server: "s", mount: "/ov", port: 8000, fetchImpl: async () => ({ ok: false, status: 404 }) })).toEqual({ ok: false, error: "the server answered 404" });
+    expect((await SM.fetchListeners({ server: "s", mount: "/ov", port: 8000, fetchImpl: async () => { throw new Error("ECONNREFUSED"); } })).ok).toBe(false);
     expect(await SM.fetchListeners({ server: "", mount: "/ov" })).toEqual({ ok: false, error: "no server or mount set" });
   });
 });
@@ -89,10 +90,13 @@ describe("a failing stream says why and can be stopped (HalloVeen check, 2026-10
   });
 });
 
-describe("the server's own port (item 20)", () => {
+describe("the station's own port, never a fixed 8000 (item 20; Jeff 2026-10-31)", () => {
   const { serverAndPort } = require_("../audiod/stream");
-  it("uses the port written in the address; 8000 when none is", () => {
-    expect(serverAndPort("44.244.52.207")).toEqual({ host: "44.244.52.207", port: 8000 });
+  it("the port written in the address wins; else the station's port setting; none = null", () => {
+    expect(serverAndPort("44.244.52.207", 8000)).toEqual({ host: "44.244.52.207", port: 8000 });
+    expect(serverAndPort("44.244.52.207", 8100)).toEqual({ host: "44.244.52.207", port: 8100 });
+    expect(serverAndPort("44.244.52.207", null)).toEqual({ host: "44.244.52.207", port: null });
+    expect(serverAndPort("h:8443", 8000)).toEqual({ host: "h", port: 8443 });
     expect(serverAndPort("stream.ether-technologies.com:8443")).toEqual({ host: "stream.ether-technologies.com", port: 8443 });
     expect(serverAndPort(" https://stream.x.com:8443/ov ")).toEqual({ host: "stream.x.com", port: 8443 });
   });
@@ -101,11 +105,16 @@ describe("the server's own port (item 20)", () => {
     const s = Object.create(StreamSupervisor.prototype);
     Object.assign(s, { getPort: () => 0, _emit: () => {} });
     expect(SM.settingsOf({ id: 1, icecast_server_url: "stream.x.com:8443", icecast_mount: "/ov" })).toMatchObject({ server: "stream.x.com", port: 8443 });
+    expect(SM.settingsOf({ id: 1, icecast_server_url: "stream.x.com", icecast_port: null, icecast_mount: "/ov" }).port).toBe(null);
+    expect(SM.patchFrom({ port: "8100" })).toEqual({ icecast_port: 8100 });
+    expect(SM.patchFrom({ port: "" })).toEqual({ icecast_port: null });
     let asked = "";
     await SM.fetchListeners({ server: "stream.x.com", mount: "/ov", port: 8443, fetchImpl: async (u) => { asked = u; return { ok: true, json: async () => ({ icestats: {} }) }; } });
     expect(asked).toBe("http://stream.x.com:8443/status-json.xsl");
-    expect(read("audiod/stream.js")).toMatch(/const sp = serverAndPort\(server, config\.icecastPort \|\| 8000\);\s*this\.url = `icecast:\/\/source:\$\{pw\}@\$\{sp\.host\}:\$\{sp\.port\}\$\{mount\}`/);
-    expect(read("electron/main.js")).not.toMatch(/@\$\{server\}:8000\$\{mount\}/);
+    expect(read("audiod/stream.js")).toMatch(/const sp = serverAndPort\(server, config\.icecastPort\);/);
+    expect(read("audiod/stream.js")).toMatch(/No port set for this station\. Set it in Stream Manager\./);
+    for (const f of ["electron/main.js", "audiod/stream.js", "electron/stream-manager.js", "electron/metadata-dispatcher.js", "src/components/SettingsPanel.tsx", "src/components/StreamManager.tsx", "src/components/StreamMetadataPanel.tsx"])
+      expect(read(f), f).not.toMatch(/:8000\$\{|icecastPort: 8000|port \|\| 8000|port: 8000|value=\{cfg\.port \|\| 8000\}/);
   });
 });
 
