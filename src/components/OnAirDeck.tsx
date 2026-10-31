@@ -139,8 +139,9 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
 
         // ── Artist photo strategy — Wikipedia first, then Deezer ──
         // Wikipedia: free licensed press photos, clean backgrounds, no key needed
-        // All fetches go through local proxy (port 4242) for CORS canvas access
-        const PROXY = "http://localhost:4242";
+        // Photos go through Ether's own server on port 4242 (electron/local-remote.js /api/img-proxy) for CORS canvas
+        // access. 127.0.0.1, not "localhost": the server listens on IPv4 and localhost can resolve to ::1 (item 17).
+        const PROXY = "http://127.0.0.1:4242";
 
         // ── Artist photo — Wikipedia first, then iTunes ──
         // Note: Deezer removed — blocked by CORS in browser context

@@ -14,6 +14,18 @@ const COMMANDS = new Set(["skip", "stop_all", "automation_on", "automation_off"]
 const MAX_BAD_CODES = 5;              // per address per minute, then refused until the minute is up
 const BAD_CODE_WINDOW_MS = 60_000;
 
+// /api/img-proxy (dead-controls item 17): the on-air deck's artist photos are drawn on a canvas, so they must come
+// from a CORS-open address. Only for this computer (loopback), only https images from the two photo sources the deck
+// uses (Wikipedia/Wikimedia, Apple's iTunes artwork), capped in size — never an open relay.
+const IMG_HOSTS = [/(^|\.)wikimedia\.org$/i, /(^|\.)wikipedia\.org$/i, /(^|\.)mzstatic\.com$/i];
+const IMG_MAX_BYTES = 15 * 1024 * 1024;
+function imgProxyTarget(raw) {
+  let u; try { u = new URL(String(raw || "")); } catch { return null; }
+  if (u.protocol !== "https:" || !IMG_HOSTS.some(re => re.test(u.hostname))) return null;
+  return u.toString();
+}
+const isLoopback = (addr) => /^(127\.|::1$|::ffff:127\.)/.test(String(addr || ""));
+
 function newCode() { return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0"); }
 function sameCode(a, b) {
   const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
@@ -56,6 +68,18 @@ function createHandler(deps) {
         return send(res, 200, await deps.nowPlaying(), undefined, { "Access-Control-Allow-Origin": "*" });
       }
       if (path === "/" && req.method === "GET") return send(res, 200, PHONE_PAGE, "text/html; charset=utf-8");
+      if (path === "/api/img-proxy" && req.method === "GET") {
+        if (!isLoopback(req.socket?.remoteAddress)) return send(res, 403, { ok: false, error: "this computer only" });
+        const target = imgProxyTarget(new URL(req.url, "http://x").searchParams.get("url"));
+        if (!target) return send(res, 400, { ok: false, error: "not an allowed image address" });
+        const r = await (deps.fetchImpl || fetch)(target, { redirect: "follow" });
+        const type = String(r.headers.get("content-type") || "");
+        if (!r.ok || !/^image\//i.test(type)) return send(res, 502, { ok: false, error: `the photo source answered ${r.status}` });
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (buf.length > IMG_MAX_BYTES) return send(res, 502, { ok: false, error: "the photo is too large" });
+        res.writeHead(200, { "Content-Type": type, "Access-Control-Allow-Origin": "*", "Cache-Control": "max-age=86400" });
+        return res.end(buf);
+      }
       if (path === "/api/state" && req.method === "GET") {
         if (!authed(req, res)) return;
         return send(res, 200, { ok: true, nowPlaying: await deps.nowPlaying(), upNext: (await deps.upNext()).slice(0, 5) });
@@ -111,4 +135,4 @@ async function tick(){if(!code){show(false);return;}const j=await api("/api/stat
 tick();setInterval(tick,3000);
 </script></body></html>`;
 
-module.exports = { createHandler, startLocalRemote, newCode, sameCode, COMMANDS, PORT, PHONE_PAGE };
+module.exports = { createHandler, startLocalRemote, newCode, sameCode, imgProxyTarget, COMMANDS, PORT, PHONE_PAGE };

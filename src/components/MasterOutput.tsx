@@ -216,6 +216,25 @@ function SendToButton({ stationId }: { stationId: number | null }) {
   );
 }
 
+// The Station block's Stream row (item 12: it was always "—"): this station's stream as the encoder reports it — the
+// same status Stream Manager shows (main.js stream-manager:status).
+function StreamRow({ stationId }: { stationId: number | null }) {
+  const [st, setSt] = useState<{ state: string; errorMsg: string | null } | null>(null);
+  useEffect(() => {
+    if (stationId == null) { setSt(null); return; }
+    let gone = false;
+    const ask = () => (window as any).ether?.invoke?.("stream-manager:status", stationId).then((r: any) => { if (!gone) setSt(r || null); }).catch(() => {});
+    ask(); const t = setInterval(ask, 3000);
+    return () => { gone = true; clearInterval(t); };
+  }, [stationId]);
+  const state = st?.state || "idle";
+  const look: Record<string, [string, string]> = {
+    live: ["var(--status-live)", "ON AIR"], connecting: ["#fbbf24", "CONNECTING"], error: ["#ef4444", "ERROR"], idle: ["var(--status-offline)", "OFF"],
+  };
+  const [dot, value] = look[state] || look.idle;
+  return <StatusRow dot={dot} label="Stream" value={value} />;
+}
+
 function StatusRow({ dot, label, value }: { dot?: string; label: string; value: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 14px" }}>
@@ -838,7 +857,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
         {stationInfoOpen && (
           <>
             <StatusRow dot={onAir ? "var(--status-live)" : "var(--status-offline)"} label="On Air" value={onAir ? "LIVE" : "STBY"} />
-            <StatusRow dot="var(--status-offline)" label="Stream" value="—" />
+            <StreamRow stationId={stationId ?? null} />
             <StatusRow label="Uptime" value={uptime} />
             <StatusRow label="Next Break" value={nextBreak} />
           </>

@@ -95,3 +95,25 @@ describe("wiring", () => {
     expect(s).toMatch(/A public website on the internet can't reach this computer's network address/);
   });
 });
+
+describe("artist photos for the on-air deck (item 17)", () => {
+  it("only https images from Wikipedia/Wikimedia and Apple artwork", () => {
+    expect(LR.imgProxyTarget("https://upload.wikimedia.org/a.jpg")).toBe("https://upload.wikimedia.org/a.jpg");
+    expect(LR.imgProxyTarget("https://is1-ssl.mzstatic.com/image/x/3000x3000bb.jpg")).toMatch(/mzstatic/);
+    expect(LR.imgProxyTarget("http://upload.wikimedia.org/a.jpg")).toBe(null);
+    expect(LR.imgProxyTarget("https://evil.example/wikimedia.org")).toBe(null);
+    expect(LR.imgProxyTarget("https://169.254.169.254/latest")).toBe(null);
+  });
+  it("serves the image with CORS; refuses non-images", async () => {
+    const png = Buffer.from([137, 80, 78, 71]);
+    const s = await serve(deps({ fetchImpl: async (u) => ({ ok: true, status: 200, headers: new Map([["content-type", u.includes("html") ? "text/html" : "image/png"]]), arrayBuffer: async () => png }) }));
+    const r = await fetch(`${s.base}/api/img-proxy?url=${encodeURIComponent("https://upload.wikimedia.org/x.png")}`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("access-control-allow-origin")).toBe("*");
+    expect([...new Uint8Array(await r.arrayBuffer())]).toEqual([137, 80, 78, 71]);
+    expect((await fetch(`${s.base}/api/img-proxy?url=${encodeURIComponent("https://upload.wikimedia.org/x.html")}`)).status).toBe(502);
+    expect((await fetch(`${s.base}/api/img-proxy?url=${encodeURIComponent("https://example.com/x.png")}`)).status).toBe(400);
+    s.close();
+  });
+});
+
