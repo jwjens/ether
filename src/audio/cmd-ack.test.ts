@@ -42,10 +42,10 @@ describe("the ack", () => {
 
 describe("execCmd acks what really happened (App.tsx)", () => {
   const app = fs.readFileSync(path.join(__dirname, "..", "App.tsx"), "utf8");
-  const at = app.indexOf("const execCmd = async (cmd: string, data: any) => {");
+  const at = app.indexOf("const execCmd = async (cmd: string, data: any): Promise<CmdOutcome | null> => {");
   const exec = app.slice(at, app.indexOf("let es: EventSource | null = null;", at));
   it("acks accepted station-scoped commands in a finally, without awaiting", () => {
-    expect(exec).toMatch(/finally \{[\s\S]*?if \(accepted\)[\s\S]*?void postCmdAck\(/);
+    expect(exec).toMatch(/finally \{[\s\S]*?if \(accepted && !data\?\._local\)[\s\S]*?void postCmdAck\(/);
     expect(exec).toMatch(/\/api\/cmd\/ack/);
   });
   it("skipped branches are refusals (ok:false), not silent successes", () => {
