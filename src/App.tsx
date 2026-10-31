@@ -1256,7 +1256,7 @@ export default function App() {
       if (cmd === "view:deckC") toggleVisible("deckC");
       if (cmd === "view:mic") toggleVisible("mic");
       if (cmd === "help:shortcuts") window.dispatchEvent(new KeyboardEvent("keydown",{code:"Slash",shiftKey:true}));
-      if (cmd === "help:check-updates") updater.checkForUpdate?.();
+      if (cmd === "help:check-updates") updater.checkForUpdate?.(true);
       if (cmd === "nav:about") setShowAbout(true);
       if (cmd === "account:sign-out") setCurrentUser(null); // back to the profile / PIN screen
       // account:switch — REMOVED (4.4.219). Dead but wired, and dangerous if it had ever fired:
@@ -3384,6 +3384,11 @@ export default function App() {
         onRestart={updater.restart}
         onDismiss={updater.dismiss}
       />}
+      {updater.notice && (
+        <div role="status" style={{ position: "fixed", top: 64, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "10px 16px", fontSize: 13, color: "var(--text-primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+          {updater.notice}
+        </div>
+      )}
       {restoreInfo && <SessionRestoreToast info={restoreInfo} onDismiss={() => setRestoreInfo(null)} />}
       {npPickerOpen && <NowPlayingStationPicker onPick={openNowPlayingFor} onClose={() => setNpPickerOpen(false)} />}
       {switchToast && (

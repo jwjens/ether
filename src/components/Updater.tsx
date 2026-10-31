@@ -26,10 +26,18 @@ const versionOf = (s: UpdateState): string | null =>
 export function useUpdater() {
   const [state, setState] = useState<UpdateState>({ phase: "idle" });
   const [dismissed, setDismissed] = useState(false);
+  // Help → Check for Updates (manual) always answers (item 28): the update card comes back even after "Later", and
+  // "up to date" / "couldn't check" is said instead of nothing. The background checks stay silent.
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const checkForUpdate = useCallback(async () => {
+  const checkForUpdate = useCallback(async (manual: boolean = false) => {
+    if (manual) { setDismissed(false); setNotice("Checking for updates…"); }
     try {
       const result = await checkForUpdates();
+      if (manual && !result?.available) {
+        setNotice(result?.error ? `Couldn't check for updates: ${result.error}.` : `Ether ${result?.current ?? ""} is up to date.`);
+        setTimeout(() => setNotice(null), 6000);
+      } else if (manual) setNotice(null);
       if (result?.available) {
         setState({
           phase: "available",
@@ -40,8 +48,8 @@ export function useUpdater() {
           },
         });
       }
-    } catch {
-      // Silently fail
+    } catch (e) {
+      if (manual) { setNotice(`Couldn't check for updates: ${String((e as any)?.message || e)}.`); setTimeout(() => setNotice(null), 6000); }
     }
   }, []);
 
@@ -92,7 +100,7 @@ export function useUpdater() {
     setDismissed(true);
   }, []);
 
-  return { state, dismissed, checkForUpdate, download, restart, dismiss };
+  return { state, dismissed, notice, checkForUpdate, download, restart, dismiss };
 }
 
 // ── Update Banner (compact, shown in header area) ─────────────
@@ -331,7 +339,7 @@ export function ReleaseNotesPopup({ version, onClose }: { version: string; onClo
 }
 
 /** Release notes are Markdown; shown as plain text with headings bold and list items as bullets. */
-function NotesBody({ text }: { text: string }) {
+export function NotesBody({ text }: { text: string }) {
   if (!text) return <div style={{ color: "var(--text-tertiary)" }}>This release has no notes.</div>;
   const plain = (s: string) => s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
   return (

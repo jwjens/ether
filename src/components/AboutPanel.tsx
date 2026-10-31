@@ -5,51 +5,13 @@
  */
 
 import { useState, useEffect } from "react";
+import { NotesBody } from "./Updater";
 import atomLogo from "../assets/ether-atom.png";
 import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 
 interface Props {
   onClose: () => void;
 }
-
-const CHANGELOG = [
-  {
-    version: "1.5.2",
-    date: "March 2026",
-    changes: [
-      "Phone Desk — live call intake, chop & send to deck",
-      "Voice Tracker — click-to-assign talk breaks, target duration guide",
-      "Theme Studio — 8 named presets, per-element color wheels",
-      "Format Clock — custom talk break duration picker",
-      "Program Log — multi-hour selection & batch generate",
-      "WebGL2 waveform renderer — GPU accelerated, ~0.3ms per draw",
-      "EBU R128 loudness, BPM detection & cue points via Rust engine",
-      "ASIO/CPAL native audio device support",
-    ],
-  },
-  {
-    version: "1.4.0",
-    date: "January 2026",
-    changes: [
-      "Smart Scheduler with AI show notes",
-      "Broadcast Editor & Studio Editor",
-      "Podcast Studio mode",
-      "Cart Wall hot buttons",
-      "NexGen / ENCO XML import bridge",
-      "Crash recovery & session restore",
-    ],
-  },
-  {
-    version: "1.3.0",
-    date: "November 2025",
-    changes: [
-      "Live captions + SRT/VTT export",
-      "Voice tracking with format clock integration",
-      "Overflow crossfade automation",
-      "Subscription & license system",
-    ],
-  },
-];
 
 const OSS_CREDITS = [
   { name: "Electron",     license: "MIT",               url: "https://www.electronjs.org",  desc: "Desktop app framework" },
@@ -199,9 +161,8 @@ export default function AboutPanel({ onClose }: Props) {
               {/* Description */}
               <div>
                 <p style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 1.7, margin: 0 }}>
-                  Ether is a free, open-source broadcast automation platform built to replace
-                  commercial systems like RCS Zetta and GSelector. Designed for radio stations,
-                  venues, retail, worship, and podcast studios of any size.
+                  Ether is broadcast automation built to replace systems like RCS Zetta and GSelector.
+                  Designed for radio stations, venues, retail, worship, and podcast studios of any size.
                 </p>
               </div>
 
@@ -291,33 +252,7 @@ export default function AboutPanel({ onClose }: Props) {
           )}
 
           {/* ── CHANGELOG TAB ── */}
-          {tab === "changelog" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-              {CHANGELOG.map((release, ri) => (
-                <div key={release.version}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                    <span style={{
-                      fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700,
-                      color: ri === 0 ? "var(--accent-cyan)" : "rgba(255,255,255,0.4)",
-                      background: ri === 0 ? "rgb(from var(--accent-cyan) r g b / 0.1)" : "rgba(255,255,255,0.04)",
-                      border: `1px solid ${ri === 0 ? "rgb(from var(--accent-cyan) r g b / 0.25)" : "rgba(255,255,255,0.06)"}`,
-                      borderRadius: 0, padding: "2px 10px",
-                    }}>v{release.version}</span>
-                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "'DM Mono', monospace" }}>{release.date}</span>
-                    {ri === 0 && <span style={{ fontSize: 9, fontWeight: 700, color: "#34d399", background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.25)", borderRadius: 0, padding: "1px 7px", letterSpacing: "0.08em" }}>CURRENT</span>}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 4 }}>
-                    {release.changes.map((change, ci) => (
-                      <div key={ci} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 12, color: ri === 0 ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
-                        <span style={{ color: ri === 0 ? "var(--accent-cyan)" : "rgba(255,255,255,0.2)", flexShrink: 0, marginTop: 1 }}>→</span>
-                        {change}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {tab === "changelog" && <WhatsNew version={version} />}
 
           {/* ── OPEN SOURCE TAB ── */}
           {tab === "credits" && (
@@ -392,6 +327,27 @@ export default function AboutPanel({ onClose }: Props) {
           >Close</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// What's New = this version's own release notes from GitHub (item 29: it was a stale hard-coded "1.5.2 March 2026"
+// list). Same source and same rendering as the update window's Details popup.
+function WhatsNew({ version }: { version: string }) {
+  const [r, setR] = useState<any>(null);
+  useEffect(() => {
+    if (!version) return;
+    (window as any).ether.invoke("updater:release-notes-of", version).then(setR).catch((e: any) => setR({ ok: false, error: String(e) }));
+  }, [version]);
+  if (!version || !r) return <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>Loading the notes for this version…</div>;
+  if (!r.ok) return <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>The notes for Ether {version} could not be loaded: {r.error}.</div>;
+  if (!r.release) return <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>No published release notes were found for Ether {version}.</div>;
+  return (
+    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", lineHeight: 1.6 }}>
+      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: "var(--accent-cyan)", marginBottom: 8 }}>
+        {r.release.name}{r.release.date ? ` · ${new Date(r.release.date).toLocaleDateString()}` : ""}
+      </div>
+      <NotesBody text={r.release.body} />
     </div>
   );
 }

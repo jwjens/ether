@@ -9562,11 +9562,14 @@ try {
 }
 
 ipcMain.handle("updater:check", async () => {
-  if (!autoUpdater) return { available: false };
+  // Ether's version, not Electron's (unpackaged, app.getVersion() is Electron's own — see the About handler).
+  let current = app.getVersion();
+  if (!app.isPackaged) { try { current = require("../package.json").version; } catch {} }
+  // Help → Check for Updates says what happened (item 28): up to date (with the version), or why it couldn't check.
+  if (!autoUpdater) return { available: false, current, error: "updates are not available in this copy of Ether" };
   try {
     const result = await autoUpdater.checkForUpdates();
-    if (!result?.updateInfo) return { available: false };
-    const current = app.getVersion();
+    if (!result?.updateInfo) return { available: false, current, error: "the update server gave no answer" };
     const latest = result.updateInfo.version;
     // Semver-aware comparison — `available: true` only when latest is STRICTLY
     // GREATER than current. Defense against a stale latest.yml on GitHub
@@ -9578,8 +9581,9 @@ ipcMain.handle("updater:check", async () => {
       version: latest,
       notes: result.updateInfo.releaseNotes ?? null,
       date: result.updateInfo.releaseDate ?? null,
+      current,
     };
-  } catch { return { available: false }; }
+  } catch (e) { return { available: false, current, error: (e && e.message) || "the check failed" }; }
 });
 
 // Update window → Details: the release notes of every version from the running one up to the offered one, newest
@@ -9590,6 +9594,16 @@ ipcMain.handle("updater:release-notes", async (_, to) => {
   if (!app.isPackaged) { try { from = require("../package.json").version; } catch {} }
   try { return await require("./release-notes").releaseNotesFor({ from, to: String(to || "") }); }
   catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Help → About → What's New (item 29): THIS version's own release notes, from the same GitHub releases the update
+// Details popup reads — never a hard-coded list. release: null = this version has no published notes.
+ipcMain.handle("updater:release-notes-of", async (_, version) => {
+  try {
+    const r = await require("./release-notes").releaseNotesFor({ from: "0.0.0", to: String(version || "") });
+    if (!r.ok) return r;
+    return { ok: true, version, release: r.releases.find(x => x.version === String(version)) || null };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 ipcMain.handle("updater:download", async () => {
