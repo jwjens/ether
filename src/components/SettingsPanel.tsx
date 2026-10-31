@@ -3036,11 +3036,12 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
   const handleProcessAll = async () => {
     setProcessing(true); setProcessingProgress("Starting...");
-    const count = await processAllSongs((d, t, title) => {
+    const r = await processAllSongs((d, t, title) => {
       setProcessingDone(d); setProcessingTotal(t);
       setProcessingProgress("Analyzing: " + title + " (" + d + "/" + t + ")");
     });
-    setProcessingProgress("Done! Analyzed " + count + " songs.");
+    // processLibrary answers { processed, failed, skipped } — it printed "Analyzed [object Object] songs" (item 11).
+    setProcessingProgress(`Done. Analyzed ${r.processed} song${r.processed === 1 ? "" : "s"}${r.failed ? `; ${r.failed} couldn't be analyzed and were left unchanged` : ""}.`);
     setProcessing(false);
     getProcessingStats().then(setProcessingStats);
   };
@@ -3414,7 +3415,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
         <MicInputsSettings />
       </Section>
 
-      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>} title="Loudness Normalization" description="Make every song play at the same volume — no more jarring jumps between quiet and loud tracks">
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>} title="Song Analysis (loudness and BPM)" description="Measure each song's loudness and tempo and keep them with the song. How loud songs play is set by the Loudness target in Loudness & faders">
         {processingStats && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
             {[
@@ -3448,7 +3449,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
             Reset
           </button>
         </div>
-        <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 10 }}>Target is -14 LUFS — the broadcast standard used by most radio stations. This runs in the background and doesn't affect playback.</div>
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 10 }}>This measures and saves each song's loudness (LUFS) and tempo (BPM). It does not change how loud songs play — every file plays at the <b>Loudness target</b> in <b>Loudness &amp; faders</b> above.</div>
       </Section>
 
       {/* ── Audio Processing (program-bus loudness) ── */}
