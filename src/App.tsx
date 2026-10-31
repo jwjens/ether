@@ -2,7 +2,7 @@ import { etherConfirm } from "./lib/etherConfirm";
 import { isPlainKey } from "./lib/plainKey";
 import { bootSeq, bootMarkAuthComplete } from "./audio/boot-seq";
 import UserLogin from "./components/UserLogin";
-import TrialGate from "./components/TrialGate";
+import BillingBanner from "./components/BillingBanner";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import GenerateProgressBar from "./components/GenerateProgressBar";
 import BootStatus from "./components/BootStatus";
@@ -2809,7 +2809,10 @@ export default function App() {
           don't exist (N, F1–F4, F10, F12). The sheet below lists the keys appShortcut() really answers (item 27). */}
       {/* Jukebox is no longer a takeover of this window — it opens as its own jukebox pop-out
           (hamburger → Windows → Jukebox → #popout/jukebox). See the rebuild design §0.1. */}
-      <TrialGate />
+      {/* Billing notice (trial ending / ended, payment failed, card expired, grace, lapsed): a banner in the page, never a
+          blocking screen and never touching audio. It replaces the old full-screen trial-ended overlay (TrialGate), which
+          broke the lapse rule and quietly wrote the plan down to free (docs/paywall-entitlements-plan.md). */}
+      <BillingBanner />
       <IrisBadge open={irisOpen} onClose={() => setIrisOpen(false)} />{/* Iris chat panel — opened by the bottom-bar IRIS button (contract: docs/iris-ether-contract.md) */}
       <SchedulerHealthHost />{/* Movable Scheduler Health panel — opened from Tools */}
 

@@ -1,5 +1,6 @@
 import { ETHER_BACKEND_URL, blockedByDevGuard } from "./etherBackend";
 import { query } from "../db/client";
+import { publishBillingNotice } from "./billingNotice";
 import { idsFromStoredList } from "./refValue";
 import { queryScoped } from "../db/stationScoped";
 import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./provisioning";
@@ -1055,6 +1056,8 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
       }),
     });
     const data = await res.json().catch(() => ({}));
+    // The billing banner's notice rides on every connect answer (also on a lapsed-trial 401) — src/lib/billingNotice.ts.
+    publishBillingNotice((data as any)?.billing_notice ?? null);
     // A response ARRIVED — the backend is reachable again. Clears the down state here rather than at
     // the end of the function, because the condition being tracked is reachability: a 401 still
     // proves the host answered, and the stale-key heal below is a different problem with its own path.
