@@ -5,13 +5,29 @@
 //      free Station-tier access in exchange for feedback + testimonial.
 //   2. Ongoing feedback — send bug reports / feature requests to Ether.
 //
-// Delivery: tries HTTPS POST to the Ether backend; falls back to mailto:
-// so the user isn't blocked if the backend is down or they're offline.
-// Both endpoints log to localStorage so Ether can show submitted status
-// on next open.
+// Delivery: HTTPS POST to the Ether backend (/beta/apply, /feedback — built
+// 2026-11-01; before that both 404'd). "Received" shows ONLY when the server
+// answered that it stored the row (src/lib/betaSubmit.ts). A failure shows its
+// reason and keeps what was typed; "Email it instead" is a button the user
+// presses, never automatic. The application is remembered as filed (localStorage)
+// only after the server confirmed it.
 
 import { useEffect, useState } from "react";
-import { ETHER_BACKEND_URL } from "../lib/etherBackend";
+import { ETHER_BACKEND_URL, blockedByDevGuard } from "../lib/etherBackend";
+import { submitForm, mailtoFor, type SubmitResult } from "../lib/betaSubmit";
+
+/** The real app version for the report (was a hard-coded "1.0"). */
+function useAppVersion(): string {
+  const [v, setV] = useState("");
+  useEffect(() => {
+    try {
+      (window as any).ether?.system?.getVersion?.().then((x: string) => setV(String(x || ""))).catch(() => {});
+    } catch {}
+  }, []);
+  return v;
+}
+
+const DEV_RESULT: SubmitResult = { ok: false, kind: "dev", message: "This is a development build; it does not send to the Ether server. Not sent." };
 
 const SUBMIT_URL   = `${ETHER_BACKEND_URL}/beta/apply`;
 const FEEDBACK_URL = `${ETHER_BACKEND_URL}/feedback`;
@@ -38,7 +54,9 @@ export default function BetaProgram() {
   const [alreadyApplied, setAlreadyApplied] = useState(false);
 
   useEffect(() => {
-    try { if (localStorage.getItem("ether_beta_applied")) setAlreadyApplied(true); } catch {}
+    // Filed only if the server confirmed it (server_id). Before 2026-11-01 a failed send was also remembered as filed
+    // (the routes didn't exist, so every one failed) — those entries carry no server_id and no longer count.
+    try { if (JSON.parse(localStorage.getItem("ether_beta_applied") || "{}").server_id) setAlreadyApplied(true); } catch {}
   }, []);
 
   return (
@@ -103,43 +121,35 @@ function ApplyTab({ onApplied, alreadyApplied }: { onApplied: () => void; alread
     estimated_listeners: "", current_automation: "", why_ether: "",
     contact_name: "", contact_email: "", phone: "", submitted_at: 0,
   });
+  const appVersion = useAppVersion();
   const [sending, setSending] = useState(false);
-  const [result, setResult]   = useState<"ok" | "email" | "error" | null>(null);
+  const [result, setResult]   = useState<"ok" | null>(null);
   const [error, setError]     = useState("");
+  const [canEmail, setCanEmail] = useState(false);
 
   const update = (k: keyof BetaApp, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   const submit = async () => {
-    if (!form.station_name || !form.contact_email) {
+    if (!form.station_name.trim() || !form.contact_email.trim()) {
       setError("Station name and contact email are required"); return;
     }
-    setSending(true); setError("");
-    const payload = { ...form, submitted_at: Date.now() };
-    try {
-      const r = await fetch(SUBMIT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (r.ok) {
-        setResult("ok");
-        try { localStorage.setItem("ether_beta_applied", JSON.stringify(payload)); } catch {}
-        onApplied();
-      } else {
-        throw new Error("backend unreachable");
-      }
-    } catch {
-      // Fall back to mailto — open the user's email client with a pre-filled draft
-      const body = `Station beta application\n\n` +
-        Object.entries(payload).filter(([k]) => k !== "submitted_at")
-          .map(([k, v]) => `${k}: ${v}`).join("\n");
-      const mailto = `mailto:${EMAIL_FALLBACK}?subject=${encodeURIComponent("Ether beta application: " + form.station_name)}&body=${encodeURIComponent(body)}`;
-      window.location.href = mailto;
-      setResult("email");
-      try { localStorage.setItem("ether_beta_applied", JSON.stringify(payload)); } catch {}
+    setSending(true); setError(""); setCanEmail(false);
+    const payload = { ...form, app_version: appVersion, submitted_at: Date.now() };
+    const res = blockedByDevGuard("beta application") ? DEV_RESULT : await submitForm(SUBMIT_URL, payload);
+    if (res.ok) {
+      setResult("ok");
+      try { localStorage.setItem("ether_beta_applied", JSON.stringify({ ...payload, server_id: res.id ?? true })); } catch {}
       onApplied();
+    } else {
+      setError(res.message);
+      setCanEmail(res.kind !== "invalid");
     }
     setSending(false);
+  };
+
+  const emailInstead = () => {
+    const { submitted_at: _s, ...lines } = { ...form, app_version: appVersion };
+    window.location.href = mailtoFor(EMAIL_FALLBACK, "Ether beta application: " + form.station_name, lines);
   };
 
   if (alreadyApplied && !result) {
@@ -161,15 +171,6 @@ function ApplyTab({ onApplied, alreadyApplied }: { onApplied: () => void; alread
       </div>
     );
   }
-  if (result === "email") {
-    return (
-      <div style={{ padding: 20, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)" }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#f59e0b", marginBottom: 4 }}>📧 Opened in email</div>
-        <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>The backend isn't reachable right now, so we've opened your email client with the application pre-filled. Just hit send.</div>
-      </div>
-    );
-  }
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -204,7 +205,10 @@ function ApplyTab({ onApplied, alreadyApplied }: { onApplied: () => void; alread
         <Field label="Phone (optional)"><input value={form.phone} onChange={e => update("phone", e.target.value)} style={inputStyle} /></Field>
       </div>
 
-      {error && <div style={{ padding: "8px 12px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#ef4444", fontSize: 12 }}>{error}</div>}
+      {error && <div role="alert" style={{ padding: "8px 12px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#ef4444", fontSize: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <span>{error}</span>
+        {canEmail && <button onClick={emailInstead} style={emailBtnStyle}>Email it instead</button>}
+      </div>}
 
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <button onClick={submit} disabled={sending} style={{
@@ -226,33 +230,29 @@ function FeedbackTab() {
   const [email, setEmail] = useState(() => {
     try { return JSON.parse(localStorage.getItem("ether_beta_applied") || "{}").contact_email || ""; } catch { return ""; }
   });
+  const appVersion = useAppVersion();
   const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<"ok" | "email" | null>(null);
+  const [result, setResult] = useState<"ok" | null>(null);
+  const [failure, setFailure] = useState<SubmitResult | null>(null);
 
   const submit = async () => {
     if (!text.trim()) return;
-    setSending(true);
-    const payload = {
-      category, feedback: text, email,
-      app_version: "1.0", // could pull from package.json in future
-      submitted_at: Date.now(),
-    };
-    try {
-      const r = await fetch(FEEDBACK_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (r.ok) setResult("ok");
-      else throw new Error();
-    } catch {
-      const body = `${category.toUpperCase()}: ${text}\n\nFrom: ${email}`;
-      window.location.href = `mailto:${EMAIL_FALLBACK}?subject=${encodeURIComponent("Ether feedback: " + category)}&body=${encodeURIComponent(body)}`;
-      setResult("email");
+    setSending(true); setFailure(null); setResult(null);
+    const payload = { category, feedback: text, email, app_version: appVersion, submitted_at: Date.now() };
+    const res = blockedByDevGuard("feedback") ? DEV_RESULT : await submitForm(FEEDBACK_URL, payload);
+    if (res.ok) {
+      setResult("ok");
+      setText("");                       // cleared only once the server has it
+      setTimeout(() => setResult(null), 6000);
+    } else {
+      setFailure(res);                   // what was typed stays in the box
     }
-    setText("");
     setSending(false);
-    setTimeout(() => setResult(null), 6000);
+  };
+
+  const emailInstead = () => {
+    window.location.href = mailtoFor(EMAIL_FALLBACK, "Ether feedback: " + category,
+      { category, feedback: text, from: email, app_version: appVersion });
   };
 
   return (
@@ -293,12 +293,21 @@ function FeedbackTab() {
           border: "none", cursor: (sending || !text.trim()) ? "default" : "pointer",
         }}>{sending ? "Sending…" : "Send feedback"}</button>
         {result === "ok"    && <span style={{ fontSize: 12, color: "#22c55e" }}>✓ Thanks — we got it</span>}
-        {result === "email" && <span style={{ fontSize: 12, color: "#f59e0b" }}>📧 Opened in your email app</span>}
       </div>
+      {failure && !failure.ok && (
+        <div role="alert" style={{ padding: "8px 12px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#ef4444", fontSize: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span>{failure.message}</span>
+          {failure.kind !== "invalid" && <button onClick={emailInstead} style={emailBtnStyle}>Email it instead</button>}
+        </div>
+      )}
     </div>
   );
 }
 
+const emailBtnStyle: React.CSSProperties = {
+  padding: "4px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+  background: "transparent", color: "var(--text-primary)", border: "1px solid var(--border-primary)",
+};
 const inputStyle: React.CSSProperties = {
   width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 13,
   background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
