@@ -33,6 +33,8 @@ describe("Subscription plans from the catalog", () => {
     const sub = read("src/components/SubscriptionPanel.tsx") + read("src/components/PlanCatalogCards.tsx");
     expect(sub).not.toMatch(/buy\.stripe\.com|pk_live_|price_1T|\$19|\$79|\$299|\$899|\$0</);
     expect(read("src/components/NowPlaying.tsx")).not.toMatch(/\$19 \/ MONTH|\$79 \/ MONTH/);
+    // the old free offers are gone (Jeff, 2026-11-01): the 15-day trial instead
+    expect(read("src/components/NowPlaying.tsx")).not.toMatch(/for \$0|FREE TO DOWNLOAD|OPEN SOURCE/);
   });
 });
 
