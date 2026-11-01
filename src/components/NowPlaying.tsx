@@ -89,8 +89,9 @@ const WMO: Record<number, [string, string]> = {
 const MOCK_ADS = [
   { bg: "linear-gradient(135deg,#0f172a,#1e1b4b)", accent: "#a78bfa", logo: "⚡", headline: "Ether Technologies", sub: "Professional Broadcast Automation", tag: "FREE TO DOWNLOAD", url: "ether-technologies.com" },
   { bg: "linear-gradient(135deg,#0c1a0c,#052e16)", accent: "#34d399", logo: "📻", headline: "Broadcast Smarter", sub: "Replace RCS Zetta & WideOrbit — for $0", tag: "OPEN SOURCE", url: "github.com/jwjens/ether" },
-  { bg: "linear-gradient(135deg,#0c1929,#0f2744)", accent: "var(--accent-blue)", logo: "🎙️", headline: "Ether Studio", sub: "Cloud backup · Analytics · Remote dashboard", tag: "$19 / MONTH", url: "ether-technologies.com/#pricing" },
-  { bg: "linear-gradient(135deg,#1a0a2e,#2d1b69)", accent: "#c084fc", logo: "🏢", headline: "Ether Network", sub: "Multi-station · NexGen import · ASIO audio", tag: "$79 / MONTH", url: "ether-technologies.com/#pricing" },
+  // plan names and prices live in the catalog (config/plans.json), so these slides name the plans and point at pricing
+  { bg: "linear-gradient(135deg,#0c1929,#0f2744)", accent: "var(--accent-blue)", logo: "🎙️", headline: "Ether Live", sub: "Hosted stream · Cloud backup · Remote dashboard", tag: "SEE PLANS", url: "ether-technologies.com/#pricing" },
+  { bg: "linear-gradient(135deg,#1a0a2e,#2d1b69)", accent: "#c084fc", logo: "🏢", headline: "Ether Network", sub: "Five stations · Shared listeners · Every cloud feature", tag: "SEE PLANS", url: "ether-technologies.com/#pricing" },
 ];
 
 function MockAdRotator() {

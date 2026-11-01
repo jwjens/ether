@@ -21,7 +21,8 @@ describe("plan keys on the desktop", () => {
       }
     });
   }
-  it("Unlimited has its own name on the subscription panel", () => {
-    expect(read("src/components/SubscriptionPanel.tsx")).toMatch(/plan === "unlimited"\)\s+return "Unlimited"/);
+  it("the unlimited key has its own name on the subscription panel: Network (Jeff's prices, 2026-10-31)", () => {
+    expect(read("src/components/SubscriptionPanel.tsx")).toMatch(/return planName\(plan\);/);
+    expect(read("src/lib/planLabels.ts")).toMatch(/unlimited: "Network"/);
   });
 });

@@ -35,21 +35,16 @@ The most important thing: **a lapsed trial never deletes anything.**
 ## What to do
 
 1. On the trial-ended sign-in screen, click **"Choose a plan →"**. This opens the plan picker
-   (normally `signup.ether-technologies.com`) in your web browser.
+   (your account page, `signup.ether-cast.com`) in your web browser.
 2. Pick the plan that fits your station and complete checkout.
 3. Come back to EtherCast and **Sign in** again. Your stations load and you're broadcasting.
 
 ## If your trial ends while EtherCast is open
 
-EtherCast also checks the trial date when it starts and every 10 minutes while it runs. If the trial has
-ended, your plan drops to **Solo (free)** and a window opens: **"Your free trial has ended"**. It gives
-you two choices:
-
-- **See plans & subscribe →** — opens the Subscription panel so you can pick a plan.
-- **Continue on Solo (Free)** — keep using EtherCast on the free Solo plan.
-
-Your stations, library and settings are saved either way. Already subscribed? Open **Subscription** and
-sign in there to restore your plan.
+Nothing stops. Audio and playout keep running, and no screen blocks you. A small **billing notice** window appears at the
+top right with two buttons: **Add a card** (opens your account page) and **Later** (closes it). It shows when Ether
+opens and at most once a day. See [Billing notices](help-billing-notices.md) and
+[Plans and prices](help-plans-and-pricing.md).
 
 ## If you see a different message instead
 

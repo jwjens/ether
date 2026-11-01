@@ -3090,6 +3090,18 @@ export default function App() {
                     below keep their own buttons because each has a bespoke action — Desk opens the
                     desk window, Now Playing asks which station first — but they are the same kind of
                     thing as every row above: a window, opened beside the dashboard. */}
+                {/* PLANS & SUBSCRIPTION — its door (doors before rooms): the plans from the catalog, sign-in and license key. */}
+                <button
+                  onClick={() => drawerClick("subscription", () => { setPanel("subscription"); setDrawerOpen(false); })}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["subscription"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                  title="See the plans and prices, sign in, or enter a license key"
+                >
+                  <span style={{ fontSize: 15, lineHeight: 1 }}>💳</span>
+                  <span style={{ flex: 1 }}>Plans &amp; Subscription</span>
+                  {(drawerUsage["subscription"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                </button>
                 {/* THE REMOTE LINK — its door (doors before rooms): Settings → Remote Link. */}
                 <button
                   onClick={() => drawerClick("remotelink", () => { openLinkPreferences(); setDrawerOpen(false); })}
