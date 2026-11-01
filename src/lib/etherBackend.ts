@@ -10,7 +10,14 @@
 // History: OB1 — the URL was inlined in ~13 sites across renderer + electron
 // before this module landed. See close-out-tracker.md.
 
-export const ETHER_BACKEND_URL = "https://ether-backend-production.up.railway.app";
+// A dev build pointed at a local backend (2026-11-01, the local billing test): VITE_ETHER_BACKEND_URL=http://127.0.0.1:8787
+// under `npm run electron:dev`. Only a localhost URL is taken, and only in dev — a `vite build` compiles this away.
+const DEV_URL: string | null = (() => {
+  if (!import.meta.env.DEV) return null;
+  const v = String((import.meta.env as any).VITE_ETHER_BACKEND_URL || "").trim().replace(/\/+$/, "");
+  return /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(v) ? v : null;
+})();
+export const ETHER_BACKEND_URL = DEV_URL || "https://ether-backend-production.up.railway.app";
 
 // ── THE DEV WRITE GUARD (2026-08-31) ─────────────────────────────────────────────────────────────
 //
@@ -32,7 +39,7 @@ export const ETHER_BACKEND_URL = "https://ether-backend-production.up.railway.ap
 // the main process (preload exposes it), because a runtime env var cannot reach a bundled renderer
 // any other way.
 export const CAN_WRITE_PRODUCTION: boolean =
-  !import.meta.env.DEV || (typeof window !== "undefined" && (window as any).ether?.allowDevPush === true);
+  !import.meta.env.DEV || !!DEV_URL || (typeof window !== "undefined" && (window as any).ether?.allowDevPush === true);
 
 /** Loud, once per session per label: a silent guard is indistinguishable from a broken push, which
  *  is how someone spends an hour wondering why a page stopped updating. */

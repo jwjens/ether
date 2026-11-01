@@ -36,15 +36,25 @@
 // it will not come back. ETHER_ALLOW_DEV_PUSH=1 makes that a deliberate, visible act.
 const _app = (() => { try { return require("electron").app; } catch { return null; } })();
 
+const PRODUCTION_URL = "https://ether-backend-production.up.railway.app";
+
+// A DEV BUILD POINTED AT A LOCAL BACKEND (2026-11-01, the local billing test): ETHER_BACKEND_URL_DEV=http://127.0.0.1:8787
+// sends every main-process backend call there. Dev only — a packaged build never reads it. A dev build pointed at a
+// local backend is not writing to production, so the write guard lets it write there.
+const _packaged = () => (_app ? !!_app.isPackaged : true);
+const DEV_URL = (() => {
+  const v = String(process.env.ETHER_BACKEND_URL_DEV || "").trim().replace(/\/+$/, "");
+  return !_packaged() && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(v) ? v : null;
+})();
+
 /** True when this process may write to the production backend. */
 function canWriteProduction() {
   // No electron app object (a plain node script, a smoke, a migration) → treat as packaged. Those
   // callers are not dev instances, and failing closed here would silently break tooling.
-  const packaged = _app ? !!_app.isPackaged : true;
-  return packaged || process.env.ETHER_ALLOW_DEV_PUSH === "1";
+  return _packaged() || !!DEV_URL || process.env.ETHER_ALLOW_DEV_PUSH === "1";
 }
 
 module.exports = {
-  ETHER_BACKEND_URL: "https://ether-backend-production.up.railway.app",
+  ETHER_BACKEND_URL: DEV_URL || PRODUCTION_URL,
   canWriteProduction,
 };
