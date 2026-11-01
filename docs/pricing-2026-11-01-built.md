@@ -55,7 +55,11 @@ Screenshots (local copies pointed at the local test server's new catalog): https
   `deploy/pricing-1101`) and pushed as `7f0ee1b`. The other commits on `feat/announcements-visible` were NOT deployed.
   Live bundle `index-UZCFWvCQ.js` = the build from that worktree.
 - Platform: `966e3d1` pushed; live bundle carries Live 128 / Live 320.
-- Website: NOT deployed. No Cloudflare Pages project in this login serves ether-technologies.com, and no doc records
-  how it is deployed. Waiting for Jeff.
+- Website: deployed. ether-technologies.com is the **Worker `ether-website`** (static assets only, no code; custom
+  domain ether-technologies.com; no zone routes), previously uploaded from the Cloudflare dashboard (last 2026-06-12).
+  Live files matched `C:\openair-website\dist` exactly before the deploy except index.html. Deployed with
+  `npx wrangler deploy --name ether-website --assets dist --compatibility-date 2026-06-12` from `C:\openair-website`
+  (version ae6663f1-4083-4927-9b5c-194f5cb5fa55). Wrangler turned preview URLs on; set back to off via the API. Custom
+  domain still attached; live page checked. Rollback: `npx wrangler rollback --name ether-website`.
 - Rulings 2 and 4 applied first: website free-forever banner and Beta-section offer replaced with the 15-day trial;
   sign-up label removed (`991124a`); Now Playing slides (`7430ddc`, desktop, ships with the next release).
