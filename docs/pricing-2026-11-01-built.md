@@ -44,3 +44,18 @@ Screenshots (local copies pointed at the local test server's new catalog): https
 - **Now Playing promo slides** "Replace RCS Zetta & WideOrbit — for $0 · OPEN SOURCE" and "FREE TO DOWNLOAD" left as
   is (only the two slides with the old $19 / $79 were changed).
 - `C:\ether-dashboard` has one old type error (`ListenersPanel.tsx`, topojson types), not from this change.
+
+## Deployed (2026-11-01, Jeff's go)
+
+- Backend: pushed `fd4e871` to `main` (only the pricing and billing commits; the agent's item-10 routes `0395744` stay
+  local). Railway serves catalog v2 since 11:13:30. Checks: `/health` 200, `/download/windows` 302, bad license on
+  `/account/connect` 401, bad login 401, `/public/plans` = Local 20/200, Live 128 25/250, Live 320 49/490, Network 79/790.
+- Account site: `991124a` pushed; live bundle `index-CZgiJxBy.js` = the local build ("Start your 15-day free trial").
+- Dashboard: my three commits cherry-picked onto `origin/main` (worktree `C:\ether-dashboard-deploy`, branch
+  `deploy/pricing-1101`) and pushed as `7f0ee1b`. The other commits on `feat/announcements-visible` were NOT deployed.
+  Live bundle `index-UZCFWvCQ.js` = the build from that worktree.
+- Platform: `966e3d1` pushed; live bundle carries Live 128 / Live 320.
+- Website: NOT deployed. No Cloudflare Pages project in this login serves ether-technologies.com, and no doc records
+  how it is deployed. Waiting for Jeff.
+- Rulings 2 and 4 applied first: website free-forever banner and Beta-section offer replaced with the 15-day trial;
+  sign-up label removed (`991124a`); Now Playing slides (`7430ddc`, desktop, ships with the next release).
