@@ -1,8 +1,8 @@
 ---
 feature: billing-notices
 title: Billing notices
-summary: A strip at the top of Ether when your trial is ending or over, a payment didn't go through, your card expired, or your plan is in grace or lapsed. Your station keeps playing.
-where: Top of the main screen (and the web dashboard and your account page)
+summary: A small popup window in Ether when your trial is ending or over, a payment didn't go through, your card expired, or your plan is in grace or lapsed. Your station keeps playing.
+where: A popup at the top right of the main screen (and on the web dashboard and your account page)
 since: 4.6.70
 audience: operator
 tour: false
@@ -12,9 +12,10 @@ tour: false
 
 ## What it is
 
-When something about your plan needs you, Ether shows one strip at the top of the main screen. It never covers the decks
-and never stops anything: **your station keeps playing whatever it says.** The same notice shows in the web dashboard
-and on your account page, and can be emailed.
+When something about your plan needs you, Ether shows a small window at the top right of the main screen, like Adobe's.
+It is not in the way: the rest of Ether keeps working, your shortcut keys keep firing, and **your station keeps playing
+whatever it says.** It shows when Ether opens, and at most once a day after that. The same notice shows on the web
+dashboard and on your account page, and can be emailed.
 
 | Notice | When |
 |---|---|
@@ -27,9 +28,9 @@ and on your account page, and can be emailed.
 
 ## Use it
 
-1. Click the button on the strip (**Add a card** or **Update card**). It opens your account page or the secure card page
-   in your browser.
-2. Or click **Later** to hide it for 24 hours. A different notice shows at once.
+1. Click **Add a card** or **Update card**. It opens your account page or the secure card page in your browser, and
+   closes the window.
+2. Or click **Later**. The window closes; it comes back the next time Ether opens, or a day later.
 
 ## How it behaves
 

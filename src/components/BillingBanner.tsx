@@ -1,42 +1,57 @@
 import { useEffect, useState } from "react";
-import { getBillingNotice, onBillingNotice, isDismissed, dismiss, type BillingNotice } from "../lib/billingNotice";
+import { getBillingNotice, onBillingNotice, shouldShowPopup, markPopupShown, type BillingNotice } from "../lib/billingNotice";
 
-// The billing banner (src/lib/billingNotice.ts). A strip in the page above the header — it pushes the screen down a line,
-// never covers the decks or any control, and never blocks: the station keeps playing whatever it says. "Later" hides it
-// for 24 hours; a different notice shows at once. Replaces the old full-screen "Your free trial has ended" overlay.
-const COLORS: Record<string, { bg: string; border: string; fg: string }> = {
-  critical: { bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.45)", fg: "#fca5a5" },
-  warning:  { bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.45)", fg: "#fcd34d" },
-  info:     { bg: "rgba(136,104,216,0.14)", border: "rgba(136,104,216,0.45)", fg: "#c4b5fd" },
+// The billing popup (Jeff, 2026-10-31: "a popup window, like Adobe's"). A small window floating at the top right under the
+// header with the notice's words and two buttons — Update card / Add a card, and Later. It is NOT modal: no backdrop, the
+// rest of Ether stays clickable, and it never takes keyboard focus (nothing here calls focus(), and the window is not a
+// focus trap), so a jock's shortcut keys keep firing while it is up. Both buttons close it. It shows when Ether opens and
+// at most once a day after that (src/lib/billingNotice.ts). Billing never touches audio or playout.
+const COLORS: Record<string, { accent: string; fg: string }> = {
+  critical: { accent: "#ef4444", fg: "#fca5a5" },
+  warning:  { accent: "#f59e0b", fg: "#fcd34d" },
+  info:     { accent: "#8868D8", fg: "#c4b5fd" },
 };
 
 export default function BillingBanner() {
   const [notice, setNotice] = useState<BillingNotice | null>(() => getBillingNotice());
-  const [, setTick] = useState(0);
+  const [open, setOpen] = useState(false);
   useEffect(() => onBillingNotice(setNotice), []);
-  if (!notice || isDismissed(notice)) return null;
-  const c = COLORS[notice.severity || "warning"] || COLORS.warning;
-  const open = () => {
-    const url = notice.action?.url; if (!url) return;
-    const sys = (window as any).ether?.system;
-    if (sys?.openUrl) sys.openUrl(url); else window.open(url, "_blank");
+  // Due now? On the first notice of this run, and then once a day while Ether runs (checked every minute).
+  useEffect(() => {
+    if (!notice) { setOpen(false); return; }
+    const check = () => { if (shouldShowPopup()) { markPopupShown(); setOpen(true); } };
+    if (!open) check();
+    const t = setInterval(() => { if (!open) check(); }, 60_000);
+    return () => clearInterval(t);
+  }, [notice, open]);
+  if (!notice || !open) return null;
+  const c = COLORS[notice.severity === "error" ? "critical" : (notice.severity || "warning")] || COLORS.warning;
+  const act = () => {
+    const url = notice.action?.url;
+    if (url) { const sys = (window as any).ether?.system; if (sys?.openUrl) sys.openUrl(url); else window.open(url, "_blank"); }
+    setOpen(false);
   };
+  // onMouseDown preventDefault keeps a click on the popup from moving keyboard focus onto its buttons.
+  const noFocus = (e: React.MouseEvent) => e.preventDefault();
   return (
-    <div role="status" aria-live="polite" data-billing-kind={notice.kind}
-      style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: c.bg, borderBottom: `1px solid ${c.border}`, flexShrink: 0, flexWrap: "wrap" }}>
-      <div style={{ flex: 1, minWidth: 240 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: c.fg }}>{notice.title}</span>
-        <span style={{ fontSize: 13, color: "var(--text-secondary)", marginLeft: 8 }}>{notice.body}</span>
-      </div>
-      {notice.action?.url && (
-        <button onClick={open} style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, background: c.fg, color: "#111", border: "none", cursor: "pointer" }}>
-          {notice.action.label}
+    <div role="dialog" aria-modal="false" aria-labelledby="billing-popup-title" data-billing-kind={notice.kind}
+      style={{ position: "fixed", top: 64, right: 16, width: 420, maxWidth: "calc(100vw - 32px)", zIndex: 9000,
+        background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderTop: `3px solid ${c.accent}`,
+        boxShadow: "0 18px 50px rgba(0,0,0,0.45)", padding: "16px 18px 14px" }}>
+      <div id="billing-popup-title" style={{ fontSize: 15, fontWeight: 700, color: c.fg, marginBottom: 6 }}>{notice.title}</div>
+      <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-secondary)", marginBottom: 14 }}>{notice.body}</div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button tabIndex={-1} onMouseDown={noFocus} onClick={() => setOpen(false)}
+          style={{ padding: "7px 14px", fontSize: 12, background: "transparent", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+          Later
         </button>
-      )}
-      <button onClick={() => { dismiss(notice); setTick(t => t + 1); }} title="Hide for 24 hours"
-        style={{ padding: "6px 10px", fontSize: 12, background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
-        Later
-      </button>
+        {notice.action?.url && (
+          <button tabIndex={-1} onMouseDown={noFocus} onClick={act}
+            style={{ padding: "7px 16px", fontSize: 12, fontWeight: 700, background: c.accent, color: "#fff", border: "none", cursor: "pointer" }}>
+            {notice.action.label}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
