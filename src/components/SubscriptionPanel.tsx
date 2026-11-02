@@ -255,7 +255,7 @@ export default function SubscriptionPanel() {
             Sign in to activate
           </div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
-            Use the email and password from your Ether account. During your free trial this unlocks the full Unlimited plan.
+            Use the email and password from your Ether account. During your free trial this unlocks the full Network plan.
           </div>
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
             <input

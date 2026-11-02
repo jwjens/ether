@@ -27,7 +27,9 @@ describe("plan names", () => {
     for (const f of ["src/App.tsx", "src/hooks/usePlan.tsx", "src/components/SettingsPanel.tsx", "src/components/ProgramLog.tsx"]) {
       expect(read(f), f).not.toMatch(/Studio plan|Network plan|"Studio"|: Studio —/);
     }
-    expect(read("src/components/SubscriptionPanel.tsx")).not.toMatch(/return "Studio";|return "Network";|full Network plan/);
+    // "full Network plan" was an old name here on 10-31; since the 11-01 rename Network IS the current top plan, and the
+    // sign-in note says it (Jeff, 2026-11-02) — guarded in noLicenseKeyWording.test.ts.
+    expect(read("src/components/SubscriptionPanel.tsx")).not.toMatch(/return "Studio";|return "Network";|full Unlimited plan/);
   });
   it("the gates themselves are unchanged (names only)", () => {
     expect(read("src/hooks/usePlan.tsx")).toMatch(/const TIER_RANK: Record<PlanTier, number> = \{ free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3, unlimited: 3 \}/);

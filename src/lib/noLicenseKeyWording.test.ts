@@ -21,4 +21,9 @@ describe("no license key wording on the screens customers reach", () => {
     expect(s).toMatch(/Sign in with your Ether account\./);
     expect(s).not.toMatch(/\{showLicenseEntry && \(/);
   });
+  it("the sign-in panel names the plan by its current name (Network, not Unlimited)", () => {
+    const s = read("components/SubscriptionPanel.tsx");
+    expect(s).toMatch(/During your free trial this unlocks the full Network plan\./);
+    expect(s).not.toMatch(/full Unlimited plan/);
+  });
 });
