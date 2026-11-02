@@ -230,19 +230,16 @@ export default function SubscriptionPanel() {
         </div>
       </div>
 
-      {/* Activate — sign in or enter a license key. Lives at the top so the forms it
-          opens (directly below) appear right here, not off-screen. */}
+      {/* Activate — sign in with the Ether account (Jeff, 2026-11-01: the email is the license; customers never use a key).
+          Lives at the top so the form it opens (directly below) appears right here, not off-screen. */}
       <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" as const, marginBottom: 24 }}>
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Activate Ether</div>
-          <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Sign in with your Ether account, or enter a license key.</div>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Sign in with your Ether account.</div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={() => { setShowSignIn(true); setShowLicenseEntry(false); setSigninError(""); }} style={{ padding: "9px 20px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
             Sign In
-          </button>
-          <button onClick={() => { setShowLicenseEntry(true); setShowSignIn(false); setPendingPlan(null); }} style={{ padding: "9px 20px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-            Enter License Key
           </button>
         </div>
       </div>
@@ -295,46 +292,6 @@ export default function SubscriptionPanel() {
         </div>
       )}
 
-      {/* License entry */}
-      {showLicenseEntry && (
-        <div style={{
-          background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
-          borderRadius: 0, padding: 28, marginBottom: 24,
-          boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
-        }}>
-          <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
-            Enter your license key
-          </div>
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
-            After completing payment, check your email for a license key from Ether Global Technologies.
-          </div>
-          <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
-            <input
-              type="email"
-              placeholder="Email address used for purchase"
-              value={licenseEmail}
-              onChange={e => setLicenseEmail(e.target.value)}
-              style={{ padding: "10px 14px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'Inter', sans-serif" }}
-            />
-            <input
-              type="text"
-              placeholder="ETHER-PRO-XXXX-XXXX"
-              value={licenseKey}
-              onChange={e => setLicenseKey(e.target.value.toUpperCase())}
-              style={{ padding: "10px 14px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", letterSpacing: "0.08em" }}
-            />
-            {licenseError && <div style={{ fontSize: 12, color: "#f87171" }}>{licenseError}</div>}
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={validateLicense} disabled={loading} style={{ flex: 1, padding: "10px 0", borderRadius: 0, background: "var(--accent-blue)", color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Newsreader', Georgia, serif" }}>
-                {loading ? "Activating..." : "Activate License"}
-              </button>
-              <button onClick={() => { setShowLicenseEntry(false); setLicenseError(""); }} style={{ padding: "10px 16px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 13, cursor: "pointer" }}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── PLANS — from the catalog (GET /public/plans), Jeff's prices 2026-10-31 ── */}
       <PlanCatalogCards current={currentPlan} />

@@ -3106,7 +3106,7 @@ export default function App() {
                   style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["subscription"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                  title="See the plans and prices, sign in, or enter a license key"
+                  title="See the plans and prices, or sign in"
                 >
                   <span style={{ fontSize: 15, lineHeight: 1 }}>💳</span>
                   <span style={{ flex: 1 }}>Plans &amp; Subscription</span>

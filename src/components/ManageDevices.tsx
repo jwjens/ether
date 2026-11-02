@@ -289,7 +289,7 @@ export default function ManageDevices() {
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div style={{ maxWidth: 380, textAlign: "center" }}>
             <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16, lineHeight: 1.6 }}>
-              No license key is set on this install. Devices appear here after you enter a license in Subscription.
+              This computer isn't signed in to an Ether account. Devices appear here after you sign in (Subscription).
             </div>
             <button onClick={openSubscription} style={primaryBtn}>Open Subscription</button>
           </div>

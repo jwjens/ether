@@ -500,13 +500,11 @@ export default function CloudBackup() {
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 12 }}>Connection</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div>
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>License Key</div>
-              <input
-                type="password" value={licenseKey}
-                onChange={e => setLicenseKey(e.target.value)}
-                placeholder="ETH-PRO-XXXX-XXXX-XXXX"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }}
-              />
+              {/* the license key is internal (Jeff, 2026-11-01): it comes from this computer's sign-in and is never shown */}
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Account</div>
+              <div style={{ padding: "8px 0", fontSize: 12, color: licenseKey ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+                {licenseKey ? "Uses this computer's sign-in" : "Sign in first (Subscription)"}
+              </div>
             </div>
             <div>
               <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Station ID (your email)</div>

@@ -235,7 +235,7 @@ Schedule → Stations:
 
 # What's shared
 
-Nothing at the data level. Each station is fully independent. License key, user accounts, OS-level settings are shared (they live in Ether's config, not the per-station DB).
+Nothing at the data level. Each station is fully independent. The account sign-in, user accounts, OS-level settings are shared (they live in Ether's config, not the per-station DB).
 
 # Active station
 
