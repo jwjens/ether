@@ -23,8 +23,9 @@ dashboard and on your account page, and can be emailed.
 | **Your free trial has ended** | the trial is over and no card is on file |
 | **Your payment didn't go through** | the card was declined; it says the date to update it by |
 | **Your card expires soon / has expired** | the card on file expires within 30 days, or has |
-| **Grace period** | your plan's period ended; cloud features stay included until the date shown |
-| **Your plan has lapsed** | after the grace period; cloud features are no longer included |
+| **Your payment didn't go through — cloud features included until …** | a renewal payment failed; the grace period (7 days) starts that day. Click **Update card** |
+| **Your plan ended — cloud features included until …** | your subscription was cancelled or ended; grace starts that day. Click **Choose a plan** |
+| **Your plan has lapsed** | after the grace period; cloud features are no longer included until you pay again |
 
 ## Use it
 
@@ -37,3 +38,6 @@ dashboard and on your account page, and can be emailed.
 - Ether checks with your account about every 20 seconds while it runs, so a fixed card clears the strip within a minute.
 - Lifetime plans and plans set up by Ether Technologies never show a notice.
 - Playout, scheduling and starting Ether never depend on billing.
+- A failed payment or a cancelled subscription never turns off your license key: you can always sign in to Ether, and
+  your stations, library and playout carry on through grace and after it lapses. Paying again (a new card, or choosing
+  the plan again) turns cloud features back on straight away.
