@@ -59,3 +59,24 @@ billing_notice/entitlements (never read), TrialGate (fixed overlay), licenseGuar
 401), Subscription panel key/sign-in (server error as-is, inline), Manage Devices (server detail as-is, inline), Station
 Manager / public page (mapped, inline), legacy key screens (unreachable), update banner (GitHub notes, plain text). None
 stops audio; the two sign-in surfaces block.
+
+---
+
+## Done tonight (Jeff's go, 2026-11-01)
+1. **DEPLOYED** — backend `98b2ac2` (Railway deployment cc57cbf5): a trial that ended (or a lapsed plan) is never
+   refused. Desktop sign-in answers 200 with the account's own lapsed license (or a new one already lapsed) and reports
+   `trial: true` with the past end date (4.6.57's own dismissible trial-ended overlay); `/account/connect` answers 200 with
+   the stations, entitlements lapsed/grace (no cloud) and the notice. Cloud routes still refuse a lapsed key. An account
+   with no trial at all is still refused. 536/536. **Live confirmation** on test account djdeniro+lapsedcheck@gmail.com
+   (user 42; its trial end set 30 days back — one column on the test user): sign-in 200 (key, trial true, Oct 3, lapsed,
+   cloud off) · account check 200 (lapsed, notice lapsed) · /backup/list 401. The sign-in made that test account's own
+   license 38 (already lapsed). Licenses 29 and 30 get this the next time they open Ether.
+2. Built, NOT deployed — backend branch `fix/lifetime-never-expires` `22d245a`: lifetime/operator licenses never expire in
+   the key checks (cloud routes + account check). Read-only: **license 22 (djdeniro@gmail.com)** carries 2026-07-17 (past)
+   — its cloud routes are refused today; 24 (jensj@opportunityvillage.org) and 28 (maganaent@gmail.com) carry none. No
+   license changed. Test fails on the previous code.
+3. Built, NOT released — desktop `472bfd2`: a refused account answer is not a station list; the 20-second check no longer
+   re-sends every station while refused. For the next release build (4.6.57 can't change; since item 1, the server no
+   longer refuses lapsed trials, which also ends that loop for 4.6.57 on lapsed accounts).
+4. Built, NOT deployed — same branch as 2: the old refusal now reads "Your free trial has ended. Choose a plan at
+   signup.ether-technologies.com." (plain text; only an account with no trial at all reaches it now).
