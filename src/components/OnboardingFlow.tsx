@@ -7,6 +7,7 @@ import type { VenueProfile, VenueType } from "./FirstRunWizard";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 import { reconcileAccountStations, stampLicenseEverywhere } from "../lib/ccData";
 import { restoreOutcome } from "../lib/restoreOutcome";
+import { announceLicenseKey } from "../lib/accountPoll";
 import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 import etherAtom from "../assets/ether-atom.png";
 
@@ -523,6 +524,9 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       await kv.upsertByKey(stationId, 'license_key', data.license_key);
       try { await stampLicenseEverywhere(String(data.license_key).trim()); }
       catch (e) { console.warn('[activate] license stamp failed:', (e as any)?.message ?? e); }
+      // Tell App the key is here, so its regular account check (billing notices, cloud stations) starts now, not at
+      // the next launch (src/lib/accountPoll.ts).
+      announceLicenseKey(String(data.license_key).trim());
     }
     await kv.upsertByKey(stationId, 'license_email', data.email || email);
     if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);
@@ -891,6 +895,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
 
       const kv = (window as any).ether.stationConfigKv;
       await kv.upsertByKey(stationId, 'license_key', licenseKey.trim());
+      announceLicenseKey(licenseKey.trim());
       if (data.account_name) {
         await kv.upsertByKey(stationId, 'account_name', data.account_name);
       }
@@ -957,6 +962,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
 
       const kv = (window as any).ether.stationConfigKv;
       await kv.upsertByKey(stationId, 'license_key', licenseKey.trim());
+      announceLicenseKey(licenseKey.trim());
       if (data.account_name) {
         await kv.upsertByKey(stationId, 'account_name', data.account_name);
       }

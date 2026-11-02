@@ -15,6 +15,7 @@ import { recordParkSound } from "./lib/parkSound";
 import { setClosingForDates } from "./lib/closingTime";
 import { startParkMirror } from "./lib/parkMirror";
 import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, notePlayHistoryState, reconcileAccountStations, importStagedProgramming, pushHealthFrames, pushJukeboxPool, pushOpsData, fetchOpsLink } from "./lib/ccData";
+import { LICENSE_CHANGED, announcedKey, accountPollReady, startAccountPoll } from "./lib/accountPoll";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -682,6 +683,10 @@ export default function App() {
   const [panel, setPanel] = useState<Panel>("live");
   const [schedulerTab, setSchedulerTab] = useState<"shows" | "categories" | "clocks">("shows");
   const apiKeyRef = useRef<string>("");
+  // The same key as STATE, so the regular account check (below) starts the moment a fresh sign-in stores it — a ref
+  // change re-runs nothing (src/lib/accountPoll.ts). Always set both through rememberLicenseKey.
+  const [licenseKey, setLicenseKey] = useState<string>("");
+  const rememberLicenseKey = (k: string) => { apiKeyRef.current = k; setLicenseKey(k); };
   // Fleet health WATCH window: the epoch-ms at which the fast (5s) push cadence lapses back to the
   // 60s heartbeat. A stamp, not a boolean, so a viewer that vanishes without saying goodbye still
   // stops costing bandwidth. Set by the health:watch command (see execCmd).
@@ -1029,7 +1034,7 @@ export default function App() {
         const apiKey = get('license_key');
         // Remember the license for later, but DO NOT push/sync here — a license sitting in the DB
         // proves nothing. Sync only runs once an operator signs in (see the currentUser effect below).
-        if (apiKey) { apiKeyRef.current = apiKey; }
+        if (apiKey) { rememberLicenseKey(apiKey); }
         // experience_mode key in DB is now ignored — deck visibility is
         // driven entirely by Configure Decks. Old key left in DB for now.
 
@@ -1156,7 +1161,9 @@ export default function App() {
     // (account_jwt present) — the latter is what makes a cloud-restored install reconcile its tier.
     // Still gated on app-init + a license present; reconcileAccountStations only WRITES on a /account/connect
     // 200 with a plan, so this never syncs off an unauthenticated/empty state.
-    if (!firstRunChecked || (!accountSignedIn && !hasAccountJwt) || !apiKeyRef.current) return;
+    // ...and a license key known. The key is state (licenseKey) so a fresh sign-in starts this the moment the key is
+    // stored — it used to be read from a ref here, and the check never started after a fresh sign-in (2026-11-01).
+    if (!accountPollReady({ firstRunChecked, accountSignedIn, hasAccountJwt, licenseKey })) return;
     let alive = true;
     // Continuously keep this install in sync with the cloud: materialize any new account stations,
     // then import any cloud-staged programming (categories/clocks/slots/shows authored in the
@@ -1168,10 +1175,9 @@ export default function App() {
       await reconcileAccountStations(apiKeyRef.current).catch(() => {});
       if (alive) await importStagedProgramming(apiKeyRef.current).catch(() => {});
     };
-    syncCloud();
-    const id = setInterval(syncCloud, 20 * 1000); // ~every 20s
-    return () => { alive = false; clearInterval(id); };
-  }, [firstRunChecked, accountSignedIn, hasAccountJwt]);
+    const stop = startAccountPoll(() => { syncCloud(); }); // now, then ~every 20 s
+    return () => { alive = false; stop(); };
+  }, [firstRunChecked, accountSignedIn, hasAccountJwt, licenseKey]);
 
   // When a cloud→local download finishes (materialize writes file_path), re-push the
   // library view so the dashboard's local/cloud status reflects the new local files.
@@ -1185,19 +1191,23 @@ export default function App() {
 
   // Keep apiKeyRef live if user enters license mid-session
   useEffect(() => {
-    const reload = async () => {
-      const result = await (window as any).ether.stationConfigKv.list(stationId);
-      const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
-      const key = rows.find((r: any) => r.key === 'license_key')?.value;
+    const reload = async (e?: Event) => {
+      // A sign-in announces the key it stored (announceLicenseKey); an older announcement carries none — read it.
+      let key = e ? announcedKey(e) : null;
+      if (!key) {
+        const result = await (window as any).ether.stationConfigKv.list(stationId);
+        const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+        key = rows.find((r: any) => r.key === 'license_key')?.value || null;
+      }
       // Remember the license, but only push profiles up if an operator is actually signed in.
-      if (key) { apiKeyRef.current = key; if (currentUser) pushInstallUsers(key); }
+      if (key) { rememberLicenseKey(key); if (currentUser) pushInstallUsers(key); }
     };
     const pushUsers = () => { if (currentUser) pushInstallUsers(apiKeyRef.current); };
-    window.addEventListener('ether:license-changed', reload);
+    window.addEventListener(LICENSE_CHANGED, reload);
     window.addEventListener('ether:users-changed', pushUsers);
     const offMain = (window as any).ether?.users?.onChanged?.(pushUsers);   // users that arrived by sync / merge
     return () => {
-      window.removeEventListener('ether:license-changed', reload);
+      window.removeEventListener(LICENSE_CHANGED, reload);
       window.removeEventListener('ether:users-changed', pushUsers);
       if (typeof offMain === 'function') offMain();
     };
