@@ -63,3 +63,28 @@ Screenshots (local copies pointed at the local test server's new catalog): https
   domain still attached; live page checked. Rollback: `npx wrangler rollback --name ether-website`.
 - Rulings 2 and 4 applied first: website free-forever banner and Beta-section offer replaced with the 15-day trial;
   sign-up label removed (`991124a`); Now Playing slides (`7430ddc`, desktop, ships with the next release).
+
+## Deployed, second round (2026-11-01 night, Jeff's go)
+
+- **Railway variables** (ether-backend, `--skip-deploys`, then picked up by the push): `PRICE_LOCAL_MONTHLY/ANNUAL`,
+  `PRICE_STATION_MONTHLY/ANNUAL`, `PRICE_PRO_MONTHLY/ANNUAL`, `PRICE_UNLIMITED_MONTHLY/ANNUAL`,
+  `PRICE_NETWORK_EXTRA_STATION_MONTHLY`, `PRICE_LISTENERS_50_MONTHLY` = Jeff's live price ids. `PRICE_STATION` and
+  `PRICE_PRO` left in place. Note: the old `PRICE_STATION` is the same price as the new Network monthly; the new mapping
+  wins (it reads as Network). No production license has a Stripe subscription, so nothing was on it.
+- **Backend** `6b1fc62` on `main` (worktree `C:\ether-backend-deploy`, branch `deploy/billing-1101` = `fd4e871` + the
+  billing commits cherry-picked; **Beta/Feedback `0395744` left out**; route inventory 197; 520/520). Live checks: new
+  add-ons route 401 (deployed within ~50 s), `/health` 200, `/public/plans` 200 (20/200, 25/250, 49/490, 79/790),
+  `/public/stations` 200, `/download/windows` 302, bad license 401, bad login 401, unsigned webhook 400. Read-only
+  production check: index `licenses_one_per_stripe_subscription` present (`… WHERE stripe_subscription_id IS NOT NULL`);
+  columns grace_until / extra_stations / listener_addons present. No license changed.
+- **Account site** `b27a5f0` on `main`; live bundle `index-kCi5Pzbd.js` = the local build ("Start streaming").
+  Each plan's buy button → live Stripe Checkout (`cs_live_`), right product/amount/period, 8/8; nothing paid. Check
+  accounts on production (sign-ups only, trial, no license): djdeniro+buycheck@, +buycheck2@, +buycheck3@,
+  +buycheck4@gmail.com (two lost their session to a test-script slip; passwords were never stored).
+- **Dashboard** `7b18d83` on `main` (from `origin/main`, worktree `C:\ether-dashboard-deploy`, branch
+  `deploy/start-streaming`); live bundle `index-DPGN1Y0n.js` carries "Start streaming on", "Yes, start streaming",
+  "⦿ Start streaming". Also picked onto `feat/announcements-visible` (`d534d86`) so a later deploy keeps it.
+- **Desktop fixes**: local commits, for the next release build. No release published.
+- Seen in the boot log, not looked into: express-rate-limit warns that X-Forwarded-For is set while `trust proxy` is off.
+- Seen on the account site, not changed: any failed account read (even one cancelled by leaving the page) signs the
+  visitor out (`App.tsx:26`).
