@@ -146,3 +146,45 @@ Oct 30), ether-dashboard (5173, Oct 31). No old dev Ether was running. Deleted `
 - `electron/main.js` (openair, uncommitted): `ETHER_ISOLATED_DEV=1` + `--user-data-dir` = the release check's
   isolation without quitting after 30 s, dev builds only. Runtime receipt: the run's log shows "[SMOKE] ISOLATED MODE"
   and the database under `billing-test\desktop-profile`. Not committed (no unit test).
+
+---
+
+# The 3 failures fixed and rerun (2026-11-01, late evening)
+
+Report (private link, every screenshot at real size): https://claude.ai/artifact/QwZaF7vPk3UUhFjkywu8Lq — local copy
+`C:\ether-backend\billing-test\report.html`. **Rerun: 6 PASS / 0 FAIL.** Nothing pushed or deployed.
+
+## Fixes (local commits, with tests)
+1. **Account check after a fresh sign-in** — desktop `0b964bc` + `4eccf44`. Sign-in announces the key it stored
+   (`announceLicenseKey`); App keeps the key as state and the 20-second check is keyed to it (`src/lib/accountPoll.ts`).
+   **The rerun found a crash in the first version** (`0b964bc`): "Ether — startup error: Illegal invocation" right after
+   sign-in — `window.setInterval` called as a method of a plain object; Node (the unit tests) allows it, browsers do not.
+   Fixed in `4eccf44` with a browser-strict test that fails on `0b964bc`.
+2. **Popup timing** — desktop `854b1a9`. Once a day only for the same notice (same kind, period and way out); a different
+   notice shows at once. Help updated.
+3. **One license per subscription** — backend `57b00ab`. Unique partial index + `ON CONFLICT DO NOTHING` in both webhook
+   branches; made at boot, guarded (never fails boot, never changes a license). Production change and deploy steps:
+   `docs/one-license-per-subscription-2026-11-01.md`. **Production read-only check: 0 licenses with a Stripe
+   subscription, 0 duplicates; nothing changed** (backend `f6580f6`).
+4. **Test-profile setting** — desktop `9662b4c` (`electron/lib/isolated-run.js` + test) and `02ee7f0` (the existing
+   smoke-isolation test updated; `9662b4c` had broken it — the full suite was not run before that commit).
+   Desktop vitest 1467/1467, tsc 0; backend 521/521.
+
+## Rerun (second local server 8789/8790, account site 5175; the first server and its accounts untouched)
+- Rerun 1 PASS: test13 signed in fresh, never reopened; the app checked every 20 s (3 checks in 62 s) and the
+  card-expiring popup appeared by itself.
+- Rerun 2 PASS: card-expiring closed with Later → declined renewal → payment popup at once; → lapsed popup at once; paid
+  again, cancelled, period ended → "Your plan ended" popup at once. No reopen anywhere.
+- Rerun 3 PASS: the exact pair of Stripe events that made two licenses, delivered at the same instant → one license,
+  account linked, no key email (log: "already has license 1 (made at the same moment)"); a new purchase → one license.
+- Audio: 671 one-second samples over 11.2 min, deck A playing in all, no stalls, no device errors.
+- Test-tool slips: a card change made while the server clock was moved (3 webhooks refused, replayed); the replayed
+  subscription update was stale and briefly cleared the grace until the later events were re-delivered in order.
+- Finding, not fixed (not asked): Stripe does not promise event order; a late "subscription active" after a failed
+  payment would clear the grace in production the same way.
+- Both `stripe listen` sessions get every event, so the first server also recorded the rerun's 3 purchases as unlinked
+  licenses (rows 3–5 there); its user test10 and licenses 1–2 are unchanged.
+
+## Still running (until Jeff has looked)
+First server 8787/8788 + its `stripe listen` + account site 5174; rerun server 8789/8790 + its `stripe listen` + account
+site 5175; desktop page server 1420; the rerun EtherCast window (test13, signed in, tone stopped).
