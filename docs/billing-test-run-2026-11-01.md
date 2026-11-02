@@ -92,3 +92,57 @@ Each Stripe subscription has the right amount and interval (checked from Stripe)
 - Card expiring: a test-clock customer with a card expiring at the end of the month; advance into the last 30 days →
   "card expires soon", then past the end → "card expired" (or the renewal failing on it).
 - 3e: cancel a subscription → "Your plan ended — … until …" (grace) → lapsed; the key still signs in.
+
+---
+
+# Run 2 finished: 3c, 3d, 3e and the report (2026-11-01 evening)
+
+Report: `C:\ether-backend\billing-test\report.html` (PASS/FAIL list, then 48 screens at real size with captions).
+Receipts: `billing-test\results.json`, `billing-test\audio-levels.jsonl`, `billing-test\audio-summary.json`, server log
+`billing-test\run-local-3.log`. **19 PASS, 3 FAIL of 22 paths.**
+
+Closed before the run (all started in earlier sessions): vite for ether-admin (port 5797, Oct 29), openair (1420,
+Oct 30), ether-dashboard (5173, Oct 31). No old dev Ether was running. Deleted `C:\openair\ether-backend.env.stripe-test`.
+
+## PASS
+- 3a 8/8, 3b, 3c (0002 refused "Your credit card was declined…", 0069 refused "Your card is expired…"; no license).
+- 3d on a Stripe test clock (test10@ether.test, license 1): card expiring notice (4242 exp 12/26, clock Dec 3); renewal
+  charged to 0341 declined → grace ("Your payment didn't go through — cloud features included until November 9");
+  grace over → lapsed; 4242 put back and the open $25 invoice paid → active, grace and failure cleared.
+- 3e: cancel at period end (active until Feb 2) → Stripe ends it → grace ("Your plan ended … Choose a plan"; account page
+  "Subscription ended · Live 128" with the plans) → lapsed. The license was never switched off; the key signed in at
+  every stage.
+- Audio: 1,483 one-second samples over 25.8 min, deck A "playing" in every one, the engine's output frame counter
+  advancing every second (≈44,300 frames/s end to end), 0 device errors, unbroken through 3 window reloads.
+
+## FAIL (the operator's view first; diagnosis after)
+1. **Card-expiring popup did not appear after signing in.** After a fresh sign-in the app checked the account once and
+   never again until reopened (server log: one /account/connect from the app in ~30 min). Diagnosis (code, App.tsx
+   ~1153): the 20-second account check starts only if the license key is already in `apiKeyRef` when the effect runs; on
+   a fresh sign-in the key arrives later and a ref is not a dependency, so the check never starts. Runtime receipt: the
+   key and the account session were present in the app; after a window reload the check ran every 20 s and the popup
+   showed. Also stops cloud station sync in that session (same timer).
+2. **The grace popup did not appear by itself after the payment failed.** An earlier popup had closed that day, and the
+   popup shows at most once a day after the first (billingNotice.ts SHOW_EVERY_MS). My clock change closed the earlier
+   popup; without it, a user who clicks Later on "card expires soon" and then has a payment fail the same day waits up
+   to a day for the payment popup. Same for "Your plan ended" in 3e.
+3. **One purchase made two licenses.** test10's Live 128 purchase: license 1 (linked) and license 2 (not linked, its
+   key emailed). checkout.session.completed and invoice.payment_succeeded arrived together; both webhook branches found
+   no license for the subscription and each inserted one. Production has the same race (no unique rule on
+   stripe_subscription_id). Not fixed: needs a production schema decision.
+
+## Test-tool faults (fixed; not product faults)
+- The pg-mem placeholder key made desktop-activate return the placeholder → connect 401. Harness now rebuilds the index
+  as Postgres's UNIQUE (NULLs allowed). ether-backend `5742f60`, test `test/server-harness.test.js`.
+- The server-clock control moved the time the webhook signature check uses → 7 webhooks refused (400 "Timestamp
+  outside the tolerance zone"). Replayed exactly as Stripe sent them (fetched from Stripe test mode, re-signed with the
+  test secret, local only). The driver now keeps the server on real time while Stripe's clock moves.
+- Stripe stamps test-clock events with the real time, so grace dates are counted from the real failure (Nov 2 → 9)
+  while Stripe's clock read January. In production the clocks are the same.
+
+## Left as is
+- Still running (needed — the test accounts live only in its in-memory database): local server + `stripe listen`
+  (8787/8788), account site vite (5174). Stopping them deletes the local test accounts; Stripe test data stays.
+- `electron/main.js` (openair, uncommitted): `ETHER_ISOLATED_DEV=1` + `--user-data-dir` = the release check's
+  isolation without quitting after 30 s, dev builds only. Runtime receipt: the run's log shows "[SMOKE] ISOLATED MODE"
+  and the database under `billing-test\desktop-profile`. Not committed (no unit test).
