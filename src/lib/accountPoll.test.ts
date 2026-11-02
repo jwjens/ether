@@ -38,6 +38,28 @@ describe("the check itself", () => {
   });
 });
 
+describe("calls the timers the way a browser allows", () => {
+  it("never calls setInterval as a method of another object (a browser throws 'Illegal invocation' — the rerun crash)", () => {
+    const real = globalThis.setInterval, realClear = globalThis.clearInterval;
+    const strict = function (this: unknown, ...a: any[]) {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+      return (real as any)(...a);
+    };
+    const strictClear = function (this: unknown, id: any) {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+      return (realClear as any)(id);
+    };
+    (globalThis as any).setInterval = strict; (globalThis as any).clearInterval = strictClear;
+    try {
+      const check = vi.fn();
+      let stop: () => void = () => {};
+      expect(() => { stop = startAccountPoll(check); }).not.toThrow();
+      expect(() => stop()).not.toThrow();
+      expect(check).toHaveBeenCalledTimes(1);
+    } finally { (globalThis as any).setInterval = real; (globalThis as any).clearInterval = realClear; }
+  });
+});
+
 describe("the key is announced with the announcement", () => {
   it("announceLicenseKey dispatches ether:license-changed carrying the key", () => {
     const t = new EventTarget();

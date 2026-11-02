@@ -28,10 +28,12 @@ export function accountPollReady(s: { firstRunChecked: boolean; accountSignedIn:
 
 export const ACCOUNT_POLL_MS = 20 * 1000;
 
-/** Run `check` now and then every `everyMs` until the returned stop() is called. */
+/** Run `check` now and then every `everyMs` until the returned stop() is called. `timers` only for tests: by default the
+ *  global setInterval / clearInterval are called as plain functions — a browser refuses window.setInterval called as a
+ *  method of another object ("Illegal invocation"; it crashed the app at sign-in in the billing test rerun). */
 export function startAccountPoll(check: () => void, everyMs = ACCOUNT_POLL_MS,
-  timers: { setInterval: typeof setInterval; clearInterval: typeof clearInterval } = { setInterval, clearInterval }): () => void {
+  timers?: { setInterval: (f: () => void, ms: number) => unknown; clearInterval: (id: any) => void }): () => void {
   check();
-  const id = timers.setInterval(check, everyMs);
-  return () => timers.clearInterval(id);
+  const id = timers ? timers.setInterval(check, everyMs) : setInterval(check, everyMs);
+  return () => { if (timers) timers.clearInterval(id); else clearInterval(id as ReturnType<typeof setInterval>); };
 }
