@@ -310,7 +310,11 @@ setInterval(_scanLogRowChanges, 15_000);
 // Windows known folder, not %APPDATA%), so it wrote the LIVE startup log and window state, and it connected to the
 // LIVE engine's pipe. Now it keeps its own --user-data-dir and gets its own engine pipe (set before
 // audio-daemon-client loads; the daemon it spawns inherits it).
-const SMOKE_ISOLATED = process.env.ETHER_SMOKE === '1' && app.commandLine.hasSwitch('user-data-dir');
+// ETHER_ISOLATED_DEV=1 (a dev build only, 2026-11-01 — the local billing test): the same isolation, kept running (the
+// smoke check below runs only for ETHER_SMOKE=1). electron/lib/isolated-run.js.
+const SMOKE_ISOLATED = require("./lib/isolated-run").isIsolatedRun({
+  env: process.env, packaged: app.isPackaged, hasUserDataDir: app.commandLine.hasSwitch('user-data-dir'),
+});
 if (SMOKE_ISOLATED) {
   try { app.setPath("userData", app.commandLine.getSwitchValue('user-data-dir')); } catch (e) { console.warn("[SMOKE] userData:", e.message); }
   if (!process.env.ETHER_AUDIOD_PIPE) {
