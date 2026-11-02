@@ -10,8 +10,9 @@ const main = fs.readFileSync(path.join(__dirname, "main.js"), "utf8");
 const at = (s) => { const i = main.indexOf(s); expect(i, `missing: ${s}`).toBeGreaterThan(-1); return i; };
 
 describe("isolated launch: its own folders and its own engine pipe", () => {
-  it("is decided before userData is set, and only from BOTH ETHER_SMOKE=1 and an explicit --user-data-dir", () => {
-    const decl = at("const SMOKE_ISOLATED = process.env.ETHER_SMOKE === '1' && app.commandLine.hasSwitch('user-data-dir');");
+  it("is decided before userData is set, and only with an explicit --user-data-dir (ETHER_SMOKE=1, or a dev build's ETHER_ISOLATED_DEV=1 — electron/lib/isolated-run.test.js)", () => {
+    const decl = at("const SMOKE_ISOLATED = require(\"./lib/isolated-run\").isIsolatedRun({");
+    expect(main).toMatch(/env: process\.env, packaged: app\.isPackaged, hasUserDataDir: app\.commandLine\.hasSwitch\('user-data-dir'\),/);
     expect(decl).toBeLessThan(at('const _newUserData = path.join(_appData, "Ether");'));
     expect(main.match(/const SMOKE_ISOLATED =/g)).toHaveLength(1);
   });
