@@ -1,0 +1,20 @@
+# After 4.6.70 — noticed during the release, parked (scope freeze, Jeff 2026-11-02)
+
+One line each. Nothing here was worked on.
+
+- User manual PDF + Help → Documentation: NOT in 4.6.70. Help → Documentation still opens github.com/jwjens/ether; no manual PDF ships (the manual exists only as a web page / docs/ether_user_manual.docx).
+- Desktop "Start streaming" wording only partly done: the ON AIR badge tooltip still says "Click to go on air (start streaming)" (GlobalOnAirBadge.tsx:38).
+- Remote Link typed IP box: back, but folded under "Advanced: send directly to an address instead" (opens by itself when an address is saved). Seen in code only — runtime UNVERIFIED.
+- 44-item dead-controls list: partly done; open items per docs/dead-controls-status-2026-10-31.md ("Not done yet" + "Waiting on a decision"). Some were fixed later (10 Beta/Feedback, 20c plan names, 24 GUEST meter, 4 Phone Desk → CART, 7 Cloud Log Backup description, 13 stream format).
+- Old October branches not merged because they were rebuilt later in the release line: fix/aftersign-announce-catchup + wip/announce-catchup (→ 86d4bf8 and later announcement work), fix/halloveen-playout (→ 0ab6470 and the 10/18–10/20 scheduler commits), fix/p0b-trial-banner (TrialGate retired; billing popups), backup/release-1019-before-fixup e6a839f (→ f9591b2). Their docs commits were merged; 21431d3 (installer record for the superseded HalloVeen branch) conflicted and was skipped.
+- Dashboard: the main checkout C:\ether-dashboard is on feat/announcements-visible, which lacks the team sign-in commit b463882 (live from C:\ether-dashboard-deploy). A deploy from that branch would bring back the license-key login — pick b463882 onto it first.
+- Dashboard: a team member with the USER role sees "+ New Station" (seen live as Steve). Unchecked whether a user may create stations.
+- Dashboard tsc: 1 error on main, ListenersPanel.tsx (no types for topojson-client).
+- Live test account djdeniro+teamcheck@gmail.com (its own trial license, station "Team Check FM", team user Steve) left in place for Jeff; delete on his word (platform → Licenses).
+- Server: POST /api/auth/bootstrap-admin still exists (the dashboard no longer offers it); the license_key path of /api/auth/login still accepted from old pages.
+- Desktop changelog has no entries for 4.6.58–4.6.67 (those builds were never published); 4.6.70's notes cover them.
+- electron-builder.json publish.releaseType was "release" (a tag publishes live); set to "draft" for 4.6.70 so the release stays a draft until Jeff publishes. Decide whether to keep draft as the standing setting.
+- Unsigned in a signed build: the serial-port library's Windows binary (@serialport/bindings-cpp prebuilds/win32-x64/node.napi.node, added with RDS on 10-31) is not in win.signExts, so it ships unsigned (smoke-sign-filter flags it against an old local win-unpacked; CI's gate has no win-unpacked so it passes). Managed boxes with McAfee (OV) may object.
+- Engine timing gate (test:rust channel_rack_cost): "4 faders + 5 MICS, racks IN, PROCESSING ON" p99 1.13–1.18 ms > 1 ms on OVEVENTS with Chrome open; no engine audio-path change since 4.6.69 (only the 3e97d50 fingerprint line). Re-run on a quiet machine (Chrome and Ether closed, as on 10-11).
+- Suites outside CI's gate that fail (not fixed, not build-breaking): stale tests — test:mic-input (generic faders ruling), test:link (empty address = relay now), test:resolver R-9 and test:case-distinct (daemon now uses audiod/catalogue-check.js wrapper), test:preload-bridge (KNOWN_MISSING_HANDLERS stale: fs:writeFile now resolves), test:programlog-reads/-writes/-popout, test:audio-library-r2 (uploadLibrary renamed); real but minor — test:show-presets (docs/help-patch-bay.md names faders S1–S5); already failing since 4.6.60 — test:scheduler-gate T3/T15/T18; on a DB copy — screen-reads/lh-worker/push-index timing by a few ms, purge-queue/purge-onair need queued rows the copy lacks.
+- User manual: Chapter 27 (the platform console) left out of the shipped PDF — it is Ether Technologies' own tool and describes making license keys. Source kept in the draft only.

@@ -1,75 +1,127 @@
-## [4.6.70] — unreleased
+## [4.6.70] — 2026-11-02
 
-### Added
+Everything since 4.6.57, the last published version. (4.6.58 to 4.6.69 were test builds and were never published, so
+all of it arrives together here.)
 
-- **Stream Manager (☰ → Stream Manager):** the station's live stream — status, time on air, real bitrate, listener count
-  from your Icecast server, and the listen-live link with Copy / Open. Start / Stop is the ON AIR button. Edit the
-  station's server, mount, password and bitrate here.
-- **Stream Metadata Outputs (Settings → Broadcast):** every song that starts is sent as "Artist - Title" to your stream's
-  Icecast mount, Shoutcast, TuneIn AIR, a webhook, or an RDS encoder on a serial port. Each output shows its last result.
-- **Remote Access & Website (Settings → Broadcast):** a phone remote on this computer's Wi-Fi (now playing, Up Next, Skip,
-  Stop all, AUTO on / off, behind a 6-digit code) and now-playing data for pages on the same network.
-- **Update window → Details:** what was added and fixed in that update, for every version in between.
-- **☰ menu:** Stream Manager, EAS Logbook and Voice Tracker entries.
+**Important when updating:** close Ether fully (including the tray icon) and open it again after the update, so the
+audio engine starts fresh.
 
-### Fixed
 
-- **Rotation rules take effect:** STRICT / SOFT and "Max songs in a row from same category" were saved but never used.
-  SOFT rules are relaxed first; a STRICT rule is broken only as a last resort and is marked on the log and in Health.
-- **Voice tracking:** the microphone picked in Settings is used (with a message if it isn't connected), and Send to Deck
-  loads the take.
-- **Saving files:** Show+ DAW Export WAV / stems / Save session and the Play Log CSV export write the file you choose.
-- **Streaming:** a server address with its own port (for example :8443) is used as written; a failing stream says the
-  server's reason and can be stopped while it retries.
-- **EAS Logbook:** date and time boxes show local time (they shifted by the UTC offset on every save).
-- **Reloading the window keeps you signed in.** Every delete asks in Ether's own confirm window.
-- **Library / Spots / Program Log:** Scan Durations works; a failed Normalize changes nothing; audio can be attached to a
-  spot; Shows & Dayparts delete works; Show+ DAW To Deck loads the mix.
-- **Keyboard:** one shortcut list with only real keys; cart keys fire carts only while a cart wall is open; Cue Editor
-  I / N / O / U jump to the cue points.
-- **Help:** Check for Updates always answers; About shows this version's release notes.
+### Signing in
 
-## [4.6.69] — unreleased
+- **The account sign-in screen comes first when you open Ether.** Once Ether is running, the sign-in renews quietly in
+  the background, so nobody is signed out and no sign-in screen pops up. A restart while you're on air goes straight
+  back on air.
+- **Your sign-in is kept in this computer's protected storage**, no longer in the station database or in any backup.
+- **No more license keys.** You sign in with your Ether account's email and password. The "Enter License Key" option is gone.
+- Plans now show their current names and prices: Local, Live 128, Live 320 and Network.
+- If there's a problem with a trial or a payment, a small notice appears at the top right with what to do. The same
+  notice shows once a day at most; a new, more serious one shows right away. It never stops playout.
 
-### Fixed
+### The board
 
-- **Opening Ether shows the account sign-in screen first, every time, as before 4.6.68.** A computer that keeps a
-  sign-in no longer skips it. While Ether runs it still renews the sign-in in the background and never signs anyone out;
-  a restart while on air still comes straight back.
-- **Settings opens at once.** Opening it froze Ether for up to 10 seconds while the multi-machine sync numbers were
-  counted on the app's main thread. They are now counted in the background and fill in when ready ("counting…").
+- **Patch Bay (☰ → Patch Bay):** every output and input in one place.
+  - Outputs: send Master, Cue (headphones) and Aux to any device and channel pair, up to four devices at once.
+  - Inputs: connect sound-card inputs, Park mics and the Remote Link feed to the board's faders. The fader's SOURCE
+    choice and the Patch Bay always agree.
+  - A missing device is named in red. It is never quietly swapped for another one.
+  - A device that keeps stopping is shown as stalled and retried. A setting decides whether the Master output then
+    switches to the Windows default device; unless you turn that on, Ether never switches by itself.
+  - If no Master device is open, the station keeps its own clock, so the stream to listeners keeps going.
+- **Faders feel like a real console:** proper fader caps, double-click for 0 dB, grab without jumping, Shift for fine moves.
+- **The board never gets cut off:** it scrolls sideways with Master Out pinned, and a FADERS overview shows them all.
+- **Decks A, B and C can fold into one strip** that follows whichever deck is playing.
+- The thin play-progress bar is back on the source faders.
+- The "−" button removes a source channel in one click, and it stays removed.
+- MONITOR now controls every local output, AUX and window playback included.
+- The limiter's peaks land exactly on the ceiling you set.
 
-## [4.6.68] — unreleased
+### Remote Link
 
-### Added
+- **Through Ether's relay:** pick the computer and station. There's no address, port or router setup.
+- The receiving computer approves a new sender once and remembers it.
+- You can still type an address for a direct connection under "Advanced".
 
-- **Patch Bay (☰ → Patch Bay):** one place for each station's outputs — Master, Cue (PFL) and Aux to any device and
-  channel pair, up to four devices at once — and its inputs: device inputs, Park mics and the Remote Link feed patched
-  to source faders. The fader's SOURCE dropdown and the grid are the same setting. A missing device is named in red and
-  never replaced by another; the station keeps running on its own clock. Existing devices carry over.
-- **Remote Link through Ether's relay:** pick the computer and station; no address, port or router setup. The receiving
-  computer allows a new sender once and remembers it. Typing an address stays as an advanced option.
-- **Stays signed in:** while Ether runs, the sign-in renews silently in the background; nothing ever signs anyone out
-  or shows a sign-in screen. (When Ether is opened, the account sign-in screen comes first — 4.6.69.) If renewal can't happen, only account features pause (Health Monitor → Account sign-in). Remember me is on by default.
-- **The board:** real console fader caps; double-click a fader for 0 dB; strips never get cut off — the board scrolls
-  sideways with Master Out pinned and a FADERS overview; decks A, B and C can collapse into one strip that follows the
-  playing deck (saved per computer and in show presets).
-- **Settings** (was Preferences) has its own sections for Remote Link, Jukebox, Park Page and Audio Devices.
+### Streaming
 
-- **Preferences → Links:** every public page of your account and its stations at its real address (station player,
-  embed player, account page, jukebox request page and lobby screen, Park page, sign-up, the web apps, the website and
-  downloads), one section per type, each with Open and Copy. Built from the sites' own pages and your account's
-  stations, so a new page appears by itself.
+- **Stream Manager (☰ → Stream Manager):** the live stream's status, time on air, real bitrate and listener count, the
+  listen link, and your server settings, all in one place.
+- **Stream Metadata Outputs (Settings → Broadcast):** every song that starts is sent as "Artist - Title" to your Icecast
+  mount, Shoutcast, TuneIn AIR, a webhook, or an RDS encoder.
+- **Remote Access (Settings → Broadcast):** a phone remote on this computer's Wi-Fi (now playing, Up Next, Skip, Stop all,
+  AUTO on/off), protected by a 6-digit code.
+- The stream format you choose (MP3, AAC or OGG) is the one that's sent. Before, it was always MP3.
+- A server address with its own port (for example :8443) is used exactly as written. A failing stream says why, and you
+  can stop it while it retries.
 
-### Fixed
+### Playout and the log
 
-- **The sign-in is no longer stored in the station database or in any backup**; it is kept in this computer's protected
-  storage.
-- **The installer's audio engine must be built from the app's own engine source** — the build fails otherwise.
-- **The board's remove button (−) takes a source channel off in one click, patched or not.** A channel with a Link input
-  or a Park mic patched on it used to stay on the board. Removing it now clears its patch, releases the Link, and stops
-  the channel, and it stays removed. Nothing else on the board or on air is touched. If the engine refuses, the reason
-  is shown on the channel.
+- **No song airs twice by mistake.** Each deck keeps its own place in the log.
+- **The hour plays through:** the song playing at the top of the hour finishes, then the new hour starts. The show
+  schedule decides where shows begin, and the log plays as built.
+- **Every computer builds its own log** for each station, before each show starts.
+- Rotation rules now take effect: STRICT and SOFT rules and "Max songs in a row from same category." When no song fits,
+  the one that has waited longest goes in.
+- Program Log → **Why this song** explains each pick.
+- If audio stalls, Ether picks up the same song at the same spot.
+- Announcements: you choose how late a line may still play. A skipped line says it was skipped and why.
+
+### Library and files
+
+- **Songs play from where they're stored:** the catalogue by default, or the file you chose. Ether never moves,
+  downloads or repoints a file without asking you first.
+- Choose the catalogue folder in Settings. You can also choose whether missing files download into it automatically.
+- Import Music finds songs you already have before copying anything (Skip, Replace, or decide for each song).
+- Deleted songs stay deleted on every computer.
+- Editing one field of a song changes only that field.
+- Songs move between computers in the right categories, with their artists.
+
+### Multiple computers, backups and users
+
+- Sync is per station, with one switch per computer.
+- The Play Log shows which computer aired each song, and you can filter it by computer.
+- Backups follow a schedule you set on each computer, both local and cloud. Every backup is listed so you can restore from it.
+- Users and their PINs (now stored more securely) are the same on every computer.
+
+### Settings and screens
+
+- "Preferences" is now called **Settings**. It opens at once: no more freeze while it counts sync numbers.
+- Remote Link, Jukebox, Park Page and Audio Devices each have their own section.
+- Settings → **Links** lists every public page of your account and stations, each with Open and Copy.
+- New ☰ menu entries: Patch Bay, Stream Manager, EAS Logbook and Voice Tracker.
+- **Update window → Details** shows what's new in each version since yours.
+- **Help → Documentation opens the Ether User Manual**, a PDF that comes with Ether, so it works without the internet.
+- The ON AIR button and the web dashboard say **Start streaming**.
+- Sign-in and setup screens fit your screen.
+- The screen no longer jumps while lists update, and switching screens no longer slows the board.
+
+### Park page and mics
+
+- Hold to talk on Park mics, with a To stream switch.
+- The station sees what the park speakers play (the complete local mix) and can mute it.
+- A Park mic stays on until you turn it off. There's no time limit.
+
+### Fixes across the app
+
+- Voice tracking uses the mic you picked, and Send to Deck loads the take.
+- Show+ DAW: To Deck loads the mix; Load session, Export and CLIP saving work.
+- Saving files (DAW exports, Play Log CSV) writes the file you choose.
+- EAS Logbook dates and times show your local time.
+- Up Next reordering stays where you put it.
+- View → Deck A/B/C/Mic Deck show or hide those decks.
+- Phone Desk → CART works.
+- Cloud Log Backup saves its description.
+- Song Analysis → Reset clears only the current station's songs, after asking.
+- Every "are you sure?" uses Ether's own window. Reloading keeps you signed in.
+- Check for Updates always answers. About shows this version's notes.
+- Keyboard: one shortcut list with only real keys. Single-key shortcuts ignore Ctrl/Alt.
+- Iris is hidden until it ships.
+
+### Under the hood
+
+- Ether reports its version when it signs in, so support can see which version each computer runs.
+- On Windows, the installer closes the old app and audio engine cleanly before installing.
+- The audio engine always matches the app (fixed for Intel Macs), and a build with a missing engine file is refused.
 
 ## [4.4.64] — 2026-07-20
 

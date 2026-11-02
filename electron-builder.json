@@ -50,6 +50,10 @@
     {
       "from": "native/ha-setup/target/release/ha-setup.exe",
       "to": "ha-setup.exe"
+    },
+    {
+      "from": "build-resources/Ether-User-Manual.pdf",
+      "to": "Ether-User-Manual.pdf"
     }
   ],
   "npmRebuild": false,
@@ -121,6 +125,6 @@
     "provider": "github",
     "owner": "jwjens",
     "repo": "ether",
-    "releaseType": "release"
+    "releaseType": "draft"
   }
 }
