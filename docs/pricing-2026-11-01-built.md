@@ -110,3 +110,13 @@ Account site branch `fix/session-401` (from live `main` b27a5f0):
 Production (Jeff's ask, done): users 39/40/41 (`+buycheck2/3/4@gmail.com`) deleted — read-only dry run first (no
 license, no memberships, no sign-in sessions), then one guarded transaction (exactly 3 rows by id AND email AND no
 license). `+buycheck@` (user 38) kept. No license touched.
+- `418ae59` **thank-you email after a purchase** (same backend branch, not deployed). Before: an account-site purchase sent
+  NO email; the old payment-link email ("Your Ether <plan> License Key") gave the key, the monthly price even for yearly,
+  outdated steps (Studio → Enter License Key), no downloads, no account link. Now one "Welcome to Ether <plan>" email
+  per subscription from whichever branch makes the license: plan + price for the period, Download for Mac / Windows
+  (API_PUBLIC_URL/download/<os> — the account site's links, newest release), "install Ether, then sign in with the same
+  email and password", Open your account (ACCOUNT_APP_URL = https://signup.ether-technologies.com → 301
+  signup.ether-cast.com). No-account buyers (old payment links) get the key and "create your account with this email".
+  530/530. Screenshots: scratchpad `purchase-email-desktop.png` / `-phone.png`. Admin-issued key emails (platform
+  /admin issue) still use the old text with "Studio → Enter License Key" — not changed.
+  COMPANY_ADDRESS is not set on Railway: every email's footer says "Mailing address available on request".
