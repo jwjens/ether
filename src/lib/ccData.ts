@@ -1,4 +1,5 @@
 import { ETHER_BACKEND_URL, blockedByDevGuard } from "./etherBackend";
+import { canCompareStations } from "./reconcileGate";
 import { query } from "../db/client";
 import { publishBillingNotice } from "./billingNotice";
 import { idsFromStoredList } from "./refValue";
@@ -1113,7 +1114,11 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
       } catch (e) { console.warn("[reconcile] plan sync failed:", (e as any)?.message ?? e); }
     }
 
-    const cloud: any[] = Array.isArray(data.stations) ? data.stations : [];
+    // A refused answer is not a station list: stop here until the account answers normally (src/lib/reconcileGate.ts) —
+    // otherwise every local station looks unregistered and is re-sent every 20 s.
+    if (!canCompareStations(res, data)) return 0;
+
+    const cloud: any[] = data.stations;
     const local = await ether.stations.list();
     const localList = (Array.isArray(local) ? local : (local?.rows || [])) as any[];
     const haveUuids  = new Set(localList.map((s: any) => s.uuid));
