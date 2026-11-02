@@ -88,3 +88,25 @@ Screenshots (local copies pointed at the local test server's new catalog): https
 - Seen in the boot log, not looked into: express-rate-limit warns that X-Forwarded-For is set while `trust proxy` is off.
 - Seen on the account site, not changed: any failed account read (even one cancelled by leaving the page) signs the
   visitor out (`App.tsx:26`).
+
+## Follow-ups (2026-11-01, late) — built, NOT deployed (shown to Jeff first)
+
+Backend branch `fix/proxy-and-session` in `C:\ether-backend-deploy` (from live `main` 6b1fc62; Beta/Feedback still out):
+- `8f46674` **trust proxy = 1** (Railway's one proxy): each visitor gets their own sign-in limit; a forged first
+  X-Forwarded-For entry is still counted as the real address. `test/rate-limit-proxy.test.js` (fails without the fix).
+  Not changed, flagged: five places record the FIRST X-Forwarded-For entry by hand (activation / audit IPs) — a visitor
+  can forge that one; `req.ip` would be the right value now.
+- `18ec6bb` **nothing reads PRICE_STATION / PRICE_PRO**: old-price mapping removed; the platform diag route reports the
+  ten catalog price variables (each read from Stripe by id); README / env.example list the ten. 523/523.
+  PRICE_STATION = price_1TFzX79Zqn8ZGrIULbLb0oUI (the same price as Network monthly — still sold, via
+  PRICE_UNLIMITED_MONTHLY); PRICE_PRO = price_1TFzcJ9Zqn8ZGrIUwBe86nK5 (the old Pro price). Railway variables NOT removed
+  yet — waiting for Jeff (and for this code to be live first).
+
+Account site branch `fix/session-401` (from live `main` b27a5f0):
+- `1c80f00` **sign out only on 401**; a cancelled/failed load keeps the sign-in and shows "Couldn't load your account —
+  You're still signed in. Check your connection, then try again." + Try again. `src/lib/session.test.ts`; 17/17, tsc 0.
+  Screenshots: scratchpad `account-load-failed-desktop.png` / `-phone.png`.
+
+Production (Jeff's ask, done): users 39/40/41 (`+buycheck2/3/4@gmail.com`) deleted — read-only dry run first (no
+license, no memberships, no sign-in sessions), then one guarded transaction (exactly 3 rows by id AND email AND no
+license). `+buycheck@` (user 38) kept. No license touched.
