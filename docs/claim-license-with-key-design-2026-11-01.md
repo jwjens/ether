@@ -113,3 +113,24 @@ two claims at the same moment (only one wins) · user already paid · trial with
 plaintext key, trial with no stations. The license row is byte-for-byte unchanged after every claim. Desktop sign-in on a
 claimed hash-only license returns the issued key, never writes the license, and the key keeps passing `/account/connect`.
 Rate limit per account and per address. Licenses are never linked without a typed key (the 10/28 STRANGER test stays).
+
+---
+
+## Built (2026-11-01, night) — NOT deployed; screenshots shown to Jeff first
+Jeff's decisions: (1) encrypted — secret generated and set on Railway by Claude, never shown; (2) A; (3) refuse with
+"contact support to combine them".
+- Backend branch `feat/claim-license` in `C:\ether-backend-deploy` (from live `main` cb7e87c): `69a6a98` the claim
+  (route, `license_claims` table, desktop sign-in uses the claimed key, both emails), `160b046` a claim whose key can't
+  be read (secret missing/changed) makes desktop sign-in refuse with `claimed_key_unreadable` instead of re-keying.
+  552/552. Tests: `src/lib/license-claim.test.js` (14, one per check; the license row byte-for-byte unchanged),
+  `test/claim-license.test.js` (end to end through the real server; the re-key check fails if the claimed key isn't
+  used), `src/lib/purchase-email.test.js`.
+- Railway: `LICENSE_CLAIM_SECRET` set (64 chars, `--skip-deploys`, value never printed). **Must never be changed or
+  lost**: claimed keys are read with it (if it is, claimed licenses refuse desktop sign-in rather than being re-keyed).
+- Account site branch `feat/claim-license` (from live `main` 1c80f00): `e4ee215` "Have a license key?" section.
+  tsc 0, 20/20.
+- Desktop sign-in still writes `licenses.last_validated` on every sign-in (existing behaviour, all licenses) — the only
+  column of a claimed license that ever moves.
+- Screenshots (scratchpad): claim-1-email-not-confirmed-desktop, claim-2-wrong-key-desktop, claim-3-linked-desktop,
+  claim-4-after-reload-desktop, claim-5-linked-to-another-account-phone; issued-key-email-desktop/-phone;
+  noaccount-thankyou-email-desktop/-phone.
