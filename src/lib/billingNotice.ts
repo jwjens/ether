@@ -11,6 +11,8 @@ export interface BillingNotice {
   severity?: "info" | "warning" | "error" | "critical";
   endsAt?: string | null;
   daysLeft?: number | null;
+  /** The period the notice is about (the server's period_key: the day a payment failed, the card's month, …). */
+  period_key?: string | null;
 }
 
 let current: BillingNotice | null = null;
@@ -27,19 +29,32 @@ export function onBillingNotice(fn: (n: BillingNotice | null) => void): () => vo
   listeners.add(fn); return () => { listeners.delete(fn); };
 }
 
-// WHEN THE POPUP SHOWS (Jeff, 2026-10-31): "when Ether opens, and at most once a day after that while Ether runs."
-// The first notice of this run shows at once; after that it shows again only once a full day has passed since it last
-// showed. Later always closes it (until the next time it is due).
+// WHEN THE POPUP SHOWS (Jeff, 2026-10-31; 2026-11-01): "when Ether opens, and at most once a day after that while
+// Ether runs" — and "once a day" applies only to the SAME notice repeating. A different notice (payment failed after
+// "card expires soon", plan ended, lapsed after grace) shows right away, even if another popup was closed that day.
+// The first notice of a run shows at once. Later always closes it (until it is due again).
+// (Billing test 2026-11-01: a payment failure's popup waited up to a day behind an earlier "card expires soon".)
 export const SHOW_EVERY_MS = 24 * 3600 * 1000;
 const LAST_SHOWN_KEY = "ether_billing_popup_last_shown";
+const LAST_ID_KEY = "ether_billing_popup_last_id";
 let shownThisRun = false;
-export function shouldShowPopup(now = Date.now(), store: Pick<Storage, "getItem"> = localStorage, firstThisRun = !shownThisRun): boolean {
-  if (firstThisRun) return true;
-  try { const t = Number(store.getItem(LAST_SHOWN_KEY)); return !(Number.isFinite(t) && t > 0) || now - t >= SHOW_EVERY_MS; } catch { return false; }
+/** Which notice this is: the same kind about the same period, offering the same way out, is the same notice. */
+export function noticeId(n: Pick<BillingNotice, "kind" | "period_key" | "action"> | null | undefined): string {
+  return n ? `${n.kind}|${n.period_key ?? ""}|${n.action?.label ?? ""}` : "";
 }
-export function markPopupShown(now = Date.now(), store: Pick<Storage, "setItem"> = localStorage): void {
+export function shouldShowPopup(now = Date.now(), store: Pick<Storage, "getItem"> = localStorage, firstThisRun = !shownThisRun,
+  notice?: Pick<BillingNotice, "kind" | "period_key" | "action"> | null): boolean {
+  if (firstThisRun) return true;
+  try {
+    if (notice && noticeId(notice) !== (store.getItem(LAST_ID_KEY) || "")) return true;   // a different notice: now
+    const t = Number(store.getItem(LAST_SHOWN_KEY));
+    return !(Number.isFinite(t) && t > 0) || now - t >= SHOW_EVERY_MS;
+  } catch { return false; }
+}
+export function markPopupShown(now = Date.now(), store: Pick<Storage, "setItem"> = localStorage,
+  notice?: Pick<BillingNotice, "kind" | "period_key" | "action"> | null): void {
   shownThisRun = true;
-  try { store.setItem(LAST_SHOWN_KEY, String(now)); } catch { /* ignore */ }
+  try { store.setItem(LAST_SHOWN_KEY, String(now)); if (notice) store.setItem(LAST_ID_KEY, noticeId(notice)); } catch { /* ignore */ }
 }
 /** Tests only. */
 export function _resetRun(): void { shownThisRun = false; }

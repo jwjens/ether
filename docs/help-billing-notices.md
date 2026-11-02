@@ -14,7 +14,8 @@ tour: false
 
 When something about your plan needs you, Ether shows a small window at the top right of the main screen, like Adobe's.
 It is not in the way: the rest of Ether keeps working, your shortcut keys keep firing, and **your station keeps playing
-whatever it says.** It shows when Ether opens, and at most once a day after that. The same notice shows on the web
+whatever it says.** It shows when Ether opens and right after you sign in. The same notice comes back at most once a
+day; a new one (a payment that didn't go through, a plan that ended or lapsed) shows straight away. The same notice shows on the web
 dashboard and on your account page, and can be emailed.
 
 | Notice | When |
@@ -31,7 +32,8 @@ dashboard and on your account page, and can be emailed.
 
 1. Click **Add a card** or **Update card**. It opens your account page or the secure card page in your browser, and
    closes the window.
-2. Or click **Later**. The window closes; it comes back the next time Ether opens, or a day later.
+2. Or click **Later**. The window closes; it comes back the next time Ether opens, a day later, or as soon as a
+   different notice applies.
 
 ## How it behaves
 

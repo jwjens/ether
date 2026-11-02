@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
-import { publishBillingNotice, getBillingNotice, shouldShowPopup, markPopupShown, SHOW_EVERY_MS, _resetRun, type BillingNotice } from "./billingNotice";
+import { publishBillingNotice, getBillingNotice, shouldShowPopup, markPopupShown, noticeId, SHOW_EVERY_MS, _resetRun, type BillingNotice } from "./billingNotice";
 
 const n: BillingNotice = { kind: "payment_failed", title: "Your payment didn't go through", body: "…", action: { label: "Update card", url: "https://x" }, severity: "error" };
 const mem = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v); } }; };
@@ -29,6 +29,37 @@ describe("when the popup shows: when Ether opens, then at most once a day", () =
     expect(shouldShowPopup(t0 + 60_000, s)).toBe(false);
     expect(shouldShowPopup(t0 + SHOW_EVERY_MS - 1, s)).toBe(false);
     expect(shouldShowPopup(t0 + SHOW_EVERY_MS, s)).toBe(true);
+  });
+});
+
+describe("once a day is for the SAME notice; a different one shows at once (Jeff, 2026-11-01)", () => {
+  beforeEach(() => _resetRun());
+  const expiring = { kind: "card_expiring" as const, period_key: "2027-01", action: { label: "Update card", url: "u" } };
+  const failed = { kind: "grace" as const, period_key: "2026-11-02", action: { label: "Update card", url: "u" } };
+  const ended = { kind: "grace" as const, period_key: "2026-11-02", action: { label: "Choose a plan", url: "u" } };
+  const lapsed = { kind: "lapsed" as const, period_key: "2026-11-02", action: { label: "Update card", url: "u" } };
+  it("the same notice after Later: not again until a day has passed", () => {
+    const s = mem(); const t0 = 5_000_000;
+    markPopupShown(t0, s, expiring);
+    expect(shouldShowPopup(t0 + 60_000, s, undefined, { ...expiring })).toBe(false);
+    expect(shouldShowPopup(t0 + SHOW_EVERY_MS, s, undefined, expiring)).toBe(true);
+  });
+  it("payment failed right after 'card expires soon' was closed: shows at once", () => {
+    const s = mem(); const t0 = 5_000_000;
+    markPopupShown(t0, s, expiring);
+    expect(shouldShowPopup(t0 + 60_000, s, undefined, failed)).toBe(true);
+  });
+  it("lapsed after grace was closed: shows at once; plan ended is a different notice from payment failed", () => {
+    const s = mem(); const t0 = 5_000_000;
+    markPopupShown(t0, s, failed);
+    expect(shouldShowPopup(t0 + 60_000, s, undefined, lapsed)).toBe(true);
+    expect(noticeId(ended)).not.toBe(noticeId(failed));
+    expect(shouldShowPopup(t0 + 60_000, s, undefined, ended)).toBe(true);
+  });
+  it("the popup passes the notice to the rule and records the one it showed", () => {
+    const b = fs.readFileSync(path.join(__dirname, "..", "components", "BillingBanner.tsx"), "utf8");
+    expect(b).toMatch(/shouldShowPopup\(Date\.now\(\), localStorage, undefined, notice\)/);
+    expect(b).toMatch(/markPopupShown\(Date\.now\(\), localStorage, notice\)/);
   });
 });
 

@@ -16,11 +16,13 @@ export default function BillingBanner() {
   const [notice, setNotice] = useState<BillingNotice | null>(() => getBillingNotice());
   const [open, setOpen] = useState(false);
   useEffect(() => onBillingNotice(setNotice), []);
-  // Due now? On the first notice of this run, and then once a day while Ether runs (checked every minute).
+  // Due now? On the first notice of this run; a DIFFERENT notice at once; the same notice again once a day while Ether
+  // runs (checked every minute). src/lib/billingNotice.ts shouldShowPopup.
   useEffect(() => {
     if (!notice) { setOpen(false); return; }
-    const check = () => { if (shouldShowPopup()) { markPopupShown(); setOpen(true); } };
-    if (!open) check();
+    const check = () => { if (shouldShowPopup(Date.now(), localStorage, undefined, notice)) { markPopupShown(Date.now(), localStorage, notice); setOpen(true); } };
+    // While it is open its words follow the newest notice; that notice counts as shown (Later closes it until it is due).
+    if (!open) check(); else markPopupShown(Date.now(), localStorage, notice);
     const t = setInterval(() => { if (!open) check(); }, 60_000);
     return () => clearInterval(t);
   }, [notice, open]);
