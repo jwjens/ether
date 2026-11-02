@@ -188,3 +188,36 @@ Report (private link, every screenshot at real size): https://claude.ai/artifact
 ## Still running (until Jeff has looked)
 First server 8787/8788 + its `stripe listen` + account site 5174; rerun server 8789/8790 + its `stripe listen` + account
 site 5175; desktop page server 1420; the rerun EtherCast window (test13, signed in, tone stopped).
+
+---
+
+# Stripe event order fixed; deploy held (2026-11-01, night)
+
+## Event order — fixed and rerun
+- Backend `c39a5fe`: for every message about a subscription the webhook reads the subscription from Stripe as it is now
+  (once, 5 s limit) and decides from that; a late "payment failed" acts only if the subscription is not active now, a late
+  "invoice paid" clears grace only if it is active now. Stripe unreachable → 503, nothing written, Stripe redelivers.
+  Tests: 6 `order:` tests (5 fail on the previous code); backend 527/527.
+- Rerun on the fixed local server (test14, own test clock): renewal declined → grace; an OLDER "subscription active"
+  (fetched from Stripe) delivered late → grace kept; paid again → cleared; the OLDER "payment failed" delivered late → no
+  grace. PASS. Report v2: https://claude.ai/artifact/QwZaF7vPk3UUhFjkywu8Lq (screens 064–067; rerun 8/8).
+
+## Account site wording (Jeff) — ether-signup `b27a5f0`, NOT deployed
+"You're on the <plan> plan. Download Ether and start streaming."; step 3 "Start streaming — Sign in, load a show, and
+press Start streaming." Screenshot shown to Jeff before any deploy.
+Other "go on air" wording found (not changed): dashboard `HandoffModal.tsx:115` "3 · Go on air on {target}", `:121`
+"Yes, go on air", `:125` "⦿ Go on air on {target}"; `StationControls.tsx:131` "Yes, go on air", `:137` "⦿ Go on-air".
+Website: none. Emails: none.
+
+## Deploy — HELD, not done (receipts)
+1. **Production checkout would stop selling.** Railway has only `PRICE_STATION` and `PRICE_PRO` (names read with
+   `railway variables --kv`, values not shown). The live checkout uses them; the new checkout reads
+   `PRICE_<PLAN>_<MONTHLY|ANNUAL>` (none set) and would answer `invalid_plan` for every plan — including the account site
+   that is live now (it sends no period; the new code reads that as monthly). Needs the live Stripe products/prices and the
+   ten `PRICE_…` variables first (`docs/stripe-new-prices-steps-2026-11-01.md` step 4 — Jeff's).
+2. **The push would also deploy `0395744` Beta Program & Feedback routes** (not on origin/main; the branch was cut on top
+   of it). Not okayed.
+
+## Stopped (Jeff's step 3)
+Both local servers + their `stripe listen`, account sites 5174/5175, the desktop page server 1420, the test EtherCast.
+Nothing listening on 1420/5174/5175/8787–8790/9333. Stripe test data kept. No license changed anywhere.
