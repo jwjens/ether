@@ -35,7 +35,7 @@ export default function GlobalOnAirBadge({ stationId, onGoLive, onStopLive, styl
     <button
       data-tour="onair-btn"
       onClick={() => (active ? onStopLive() : onGoLive())}
-      title={active ? "Click to stop broadcasting" : "Click to go on air (start streaming)"}
+      title={active ? "Click to stop broadcasting" : "Click to start streaming"}
       style={{
         height: 48, padding: "0 24px", borderRadius: 0, border: "none", cursor: "pointer",
         fontSize: 15, fontWeight: 800, letterSpacing: "0.1em",

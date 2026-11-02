@@ -19,7 +19,7 @@ const PE = Buffer.from([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]);       
 const NOT_PE = Buffer.from("#!/bin/sh\n");
 
 // A fake packed Windows app: resources/app.asar.unpacked/native/ether-audio.node (PE) ± resources/ha-setup.exe.
-function packedWin(helper) {
+function packedWin(helper, manual = Buffer.from("%PDF-1.4 manual")) {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "ether-pack-"));
   const native = path.join(out, "resources", "app.asar.unpacked", "native");
   fs.mkdirSync(native, { recursive: true });
@@ -31,6 +31,7 @@ function packedWin(helper) {
     fs.mkdirSync(path.dirname(path.join(un, rel)), { recursive: true }); fs.writeFileSync(path.join(un, rel), body);
   }
   if (helper) fs.writeFileSync(path.join(out, "resources", "ha-setup.exe"), helper);
+  if (manual) fs.writeFileSync(path.join(out, "resources", "Ether-User-Manual.pdf"), manual);   // Help → Documentation (2026-11-02)
   return { electronPlatformName: "win32", arch: Arch.x64, appOutDir: out, packager: { appInfo: { productFilename: "Ether" } } };
 }
 
@@ -43,6 +44,15 @@ describe("afterPack: a Windows package without the HA helper fails the build", (
   });
   it("a PE helper beside a PE engine → passes", async () => {
     await expect(afterPack(packedWin(PE))).resolves.toBeUndefined();
+  });
+});
+
+describe("afterPack: a package without the user manual fails the build (Help → Documentation, 2026-11-02)", () => {
+  it("missing resources/Ether-User-Manual.pdf → throws", async () => {
+    await expect(afterPack(packedWin(PE, null))).rejects.toThrow(/USER MANUAL NOT PACKAGED/);
+  });
+  it("a manual that is not a PDF → throws", async () => {
+    await expect(afterPack(packedWin(PE, Buffer.from("<html>")))).rejects.toThrow(/packaged user manual is not a PDF/);
   });
 });
 

@@ -132,6 +132,18 @@ exports.afterPack = async function afterPack(context) {
     if (hk !== "pe") throw new Error(`[engine-pack] packaged HA helper is ${hk}, expected pe: ${helper}`);
     console.log(`  • [engine-pack] packaged HA helper OK: ${path.relative(context.appOutDir, helper)} (pe)`);
   }
+
+  // EVERY PLATFORM: the user manual. Help → Documentation opens resources/Ether-User-Manual.pdf (electron/user-manual.js;
+  // Jeff, 2026-11-02). Missing or not a PDF → throw, so no installer ships a Documentation item that opens nothing.
+  const manual = path.join(resources, "Ether-User-Manual.pdf");
+  if (!fs.existsSync(manual)) {
+    throw new Error(`[engine-pack] USER MANUAL NOT PACKAGED: ${manual}
+` +
+      `  build it with: npx electron build-resources/build-user-manual.js (electron-builder.json extraResources copies it)`);
+  }
+  const head = Buffer.alloc(5); const fd = fs.openSync(manual, "r"); fs.readSync(fd, head, 0, 5, 0); fs.closeSync(fd);
+  if (head.toString("latin1") !== "%PDF-") throw new Error(`[engine-pack] packaged user manual is not a PDF: ${manual}`);
+  console.log(`  • [engine-pack] user manual OK: ${path.relative(context.appOutDir, manual)} (${(fs.statSync(manual).size / 1024).toFixed(0)} KB)`);
 };
 
 // ── afterSign (Windows): the HA helper must carry a VALID Authenticode signature ─────────────────────────────────────

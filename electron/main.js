@@ -3765,7 +3765,8 @@ function buildMenu() {
     ]},
     { label: "Help", submenu: [
       { label: "Keyboard Shortcuts", click: () => send("help:shortcuts") },
-      { label: "Documentation", click: () => shell.openExternal("https://github.com/jwjens/ether") },
+      // The user manual that ships with Ether, opened from this computer (electron/user-manual.js; Jeff, 2026-11-02).
+      { label: "Documentation", click: () => { void require("./user-manual").openUserManual({ electron: { shell, dialog }, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appDir: __dirname }); } },
       { type: "separator" },
       { label: "Check for Updates", click: () => send("help:check-updates") },
       { label: "About Ether", click: () => send("nav:about") },
