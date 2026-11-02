@@ -1,4 +1,5 @@
 import { etherConfirm } from "../lib/etherConfirm";
+import { appVersionField } from "../lib/appVersion";
 import { useState, useEffect } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { setPlanGlobally, usePlan } from "../hooks/usePlan";
@@ -263,7 +264,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
             const idResp = await (window as any).ether.identity.get().catch(() => null);
             const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ license_key: lkSaved, machine_id: idResp?.ok ? idResp.machine_id : '', machine_name: idResp?.ok ? idResp.machine_name : '' }),
+              body: JSON.stringify({ license_key: lkSaved, machine_id: idResp?.ok ? idResp.machine_id : '', machine_name: idResp?.ok ? idResp.machine_name : '', ...appVersionField() }),
             });
             const data = await res.json().catch(() => ({}));
             const cloudUuids: string[] = (Array.isArray(data.stations) ? data.stations : []).map((s: any) => s.uuid).filter(Boolean);
@@ -418,7 +419,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       const idResp = await (window as any).ether.identity?.get?.().catch(() => null);
       const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ license_key: lk, machine_id: idResp?.ok ? idResp.machine_id : '', machine_name: idResp?.ok ? idResp.machine_name : '' }),
+        body: JSON.stringify({ license_key: lk, machine_id: idResp?.ok ? idResp.machine_id : '', machine_name: idResp?.ok ? idResp.machine_name : '', ...appVersionField() }),
       });
       connectStatus = res.status;
       const data = await res.json().catch(() => ({}));
@@ -491,7 +492,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     const res = await fetch(`${ETHER_BACKEND_URL}/api/user/desktop-activate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       // session: true → a renewable sign-in (Phase 1): this computer stays signed in while it runs.
-      body: JSON.stringify({ email, password, machine_id, machine_name, os: navigator.platform, session: true }),
+      body: JSON.stringify({ email, password, machine_id, machine_name, os: navigator.platform, session: true, ...appVersionField() }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {

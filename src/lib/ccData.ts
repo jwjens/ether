@@ -1,4 +1,5 @@
 import { ETHER_BACKEND_URL, blockedByDevGuard } from "./etherBackend";
+import { appVersionField } from "./appVersion";
 import { canCompareStations } from "./reconcileGate";
 import { query } from "../db/client";
 import { publishBillingNotice } from "./billingNotice";
@@ -1054,6 +1055,7 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
         license_key:  licenseKey,
         machine_id:   idResp?.ok ? idResp.machine_id   : "",
         machine_name: idResp?.ok ? idResp.machine_name : "",
+        ...appVersionField(),
       }),
     });
     const data = await res.json().catch(() => ({}));

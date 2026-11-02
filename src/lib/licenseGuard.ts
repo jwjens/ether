@@ -18,6 +18,7 @@
 // docs/desktop-signin-license-stamping-2026-08-07.md · docs/ov-license-401-stale-key-2026-08-06.md
 
 import { ETHER_BACKEND_URL } from "./etherBackend";
+import { appVersionField } from "./appVersion";
 import { stampLicenseEverywhere } from "./ccData";
 
 export type LicenseState = "ok" | "offline" | "revoked" | "unknown";
@@ -144,6 +145,7 @@ export async function validateLicense(reason: string): Promise<LicenseDecision> 
         license_key:  licenseKey,
         machine_id:   idResp?.ok ? idResp.machine_id   : "",
         machine_name: idResp?.ok ? idResp.machine_name : "",
+        ...appVersionField(),
       }),
     });
     status = res.status;

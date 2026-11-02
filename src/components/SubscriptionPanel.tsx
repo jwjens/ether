@@ -1,4 +1,5 @@
 import { etherConfirm } from "../lib/etherConfirm";
+import { appVersionField } from "../lib/appVersion";
 import { useState, useEffect } from "react";
 import { stampLicenseEverywhere } from "../lib/ccData";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -123,7 +124,7 @@ export default function SubscriptionPanel() {
       const res = await fetch(`${ETHER_BACKEND_URL}/api/user/desktop-activate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: acctEmail.trim(), password: acctPassword, machine_id, machine_name, os: navigator.platform }),
+        body: JSON.stringify({ email: acctEmail.trim(), password: acctPassword, machine_id, machine_name, os: navigator.platform, ...appVersionField() }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
