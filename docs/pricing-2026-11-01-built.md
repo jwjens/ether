@@ -120,3 +120,31 @@ license). `+buycheck@` (user 38) kept. No license touched.
   530/530. Screenshots: scratchpad `purchase-email-desktop.png` / `-phone.png`. Admin-issued key emails (platform
   /admin issue) still use the old text with "Studio → Enter License Key" — not changed.
   COMPANY_ADDRESS is not set on Railway: every email's footer says "Mailing address available on request".
+
+## Deployed, third round (2026-11-01, late night, Jeff's go)
+- Backend `418ae59` on `main` (trust proxy, old price variables no longer read, thank-you email). Railway deployment
+  08f3af5f SUCCESS. Live: /health, /public/plans, /public/stations 200; /download/windows and /mac 302; add-ons 401 without
+  sign-in; bad license 401; bad login 401 with `ratelimit-remaining: 39` (this address's own counter); unsigned webhook
+  400; no ERR_ERL_UNEXPECTED_X_FORWARDED_FOR in the new logs.
+- Account site `1c80f00` on `main`; live bundle `index-DUNeRvea.js` ("Couldn't load your account … still signed in … Try
+  again").
+- Old prices: read-only lookup with the live key — price_1TFzcJ9Zqn8ZGrIUwBe86nK5 (old Pro, $19/mo, archived): 0
+  subscriptions; price_1TFzX79Zqn8ZGrIULbLb0oUI (old PRICE_STATION = Network monthly $79, active): 0 subscriptions.
+  Nothing changed in Stripe. Then `PRICE_STATION` and `PRICE_PRO` deleted from Railway (no redeploy was triggered; the
+  running process keeps the old values in memory until the next deploy — unread).
+
+## Built, not deployed (shown to Jeff first)
+- Backend branch `fix/trusted-ip` (from live `main` 418ae59): `291e85a` the five places that recorded the forgeable FIRST
+  X-Forwarded-For entry (desktop sign-in, /validate, account create, seat binding, add-station → license_activations.ip_address)
+  use `clientIp(req)` = req.ip, the rate limits' trusted address. Test: a desktop sign-in with a forged first address
+  records the real one (fails without the fix). `cb7e87c` test fix: the trust-proxy wiring check failed on a CRLF working
+  copy and **291e85a was committed with that one test failing** (my command chain did not stop on it); code unchanged;
+  532/532 now.
+
+## Platform-issued key email — STOPPED before writing (Jeff's steps would be wrong today)
+Platform issue (`POST /api/platform/licenses`, also `/admin/issue`) makes a license ONLY — no account, no password. If that
+person creates an account with the same email and signs in to Ether, `resolveDesktopLicense` (src/lib/desktop-license.js)
+looks for their linked license or a membership — never a license issued to their email — and MINTS A NEW 15-DAY TRIAL.
+So "install Ether, then sign in with your email and password" would put them on a trial while their issued license sits
+unused. The old key-entry screen looks unreachable in the current app (sign-in is email + password only) — from the code,
+UNVERIFIED in the app. Needs Jeff's decision (a sign-in bridge, or another way in) before the email text is changed.
