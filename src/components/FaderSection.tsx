@@ -199,13 +199,6 @@ export default function FaderSection({
     try { await saveDeckConfigs(merged); } catch (e) { console.error("[SourceChannel] patch failed:", e); }
   }, [deckConfigs, saveDeckConfigs]);
 
-  const onSetSourceDuck = useCallback(async (slot: string, duck: boolean) => {
-    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, duck } : c));
-    try { await saveDeckConfigs(merged); } catch (e) { console.error("[SourceChannel] duck save failed:", e); }
-    try { await (window as any).ether?.audio?.setDuck?.(stationId, slot, duck); }
-    catch (e) { console.error("[SourceChannel] duck push failed:", e); }
-  }, [deckConfigs, saveDeckConfigs, stationId]);
-
   const onSetSourceChannelOn = useCallback(async (slot: string, on: boolean) => {
     try { engine.getDeck(slot)?.setMuted(!on); } catch (e) { console.error("[SourceChannel] cut push failed:", e); }
     // ONE ROW (RC5). This used to save the WHOLE board from this window's copy, channel_on included, so a cut on D
@@ -361,8 +354,6 @@ export default function FaderSection({
             // SET, not toggle — the Remote Link's auto-cut (D4). Same writer as the ON button; idempotent across windows.
             onSetOn={isJukeboxSrc ? undefined : (on => { void onSetSourceChannelOn?.(slot, on); })}
             onKindChange={k => onSetSourceKind?.(slot, k)}
-            duck={!!config.duck}
-            onDuckChange={d => onSetSourceDuck?.(slot, d)}
             onRemove={() => onRemoveSourceChannel?.(slot)}
             removeError={removeErr[slot] || null}
             onPfl={pflFor(slot)}

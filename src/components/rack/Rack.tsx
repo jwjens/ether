@@ -38,7 +38,8 @@ import ChannelRackView, { RtaBar } from "./ChannelRackView";
 import { useRta } from "../../hooks/useRta";
 import GeqGraph from "./GeqGraph";
 import { useBoardName } from "../../hooks/useBoardName";
-import { CHANNEL_SLOTS, isChannelSlot, type ChannelSlot } from "./channelRack";
+import { boardChannels, isChannelSlot, type ChannelSlot } from "./channelRack";
+import { query } from "../../db/client";
 import { RACK_VIEW_KEY, useChannelRackLamps } from "../../hooks/useChannelRack";
 
 interface Props { stationId: number; stationUuid: string | null | undefined }
@@ -78,6 +79,23 @@ export default function Rack({ stationId, stationUuid }: Props) {
     window.addEventListener("storage", on);
     return () => window.removeEventListener("storage", on);
   }, []);
+  // THE CHANNEL SELECTOR lists the decks and faders ON THE BOARD (boardChannels), re-read whenever the board changes in any
+  // window. The fader strips have no EQ button any more (Jeff, 2026-11-02): the channel is picked here.
+  const [onBoard, setOnBoard] = useState<ChannelSlot[]>(["A", "B", "C"]);
+  const [boardTick, setBoardTick] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    query<{ slot: string; enabled: number }>("SELECT slot, enabled FROM deck_configs WHERE station_id = ? AND deleted_at IS NULL", [stationId])
+      .then(rows => { if (alive) setOnBoard(boardChannels(rows)); })
+      .catch(() => { /* keep the decks */ });
+    return () => { alive = false; };
+  }, [stationId, boardTick]);
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.deckConfigs?.onChanged) return;
+    const h = ether.deckConfigs.onChanged((v: { stationId: number | null }) => { if (!v || v.stationId == null || v.stationId === stationId) setBoardTick(t => t + 1); });
+    return () => ether.deckConfigs.offChanged?.(h);
+  }, [stationId]);
   const pick = (v: "master" | ChannelSlot) => {
     setView(v);
     try { localStorage.setItem(RACK_VIEW_KEY, v === "master" ? "master" : `ch:${v}`); } catch { /* per-viewer */ }
@@ -105,7 +123,9 @@ export default function Rack({ stationId, stationUuid }: Props) {
         <span style={{ ...LABEL, marginRight: 4 }}>Rack</span>
         {tab("master", "MASTER")}
         <span style={{ width: 8 }} />
-        {CHANNEL_SLOTS.map(s => tab(s, name(s)))}
+        <span style={{ ...LABEL, marginRight: 2 }} title="Pick the deck or fader to EQ — every deck and fader on the board">Channel</span>
+        {/* a channel opened earlier that is no longer on the board stays reachable while it is selected */}
+        {(view !== "master" && !onBoard.includes(view) ? [...onBoard, view] : onBoard).map(s => tab(s, name(s)))}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         {view === "master"

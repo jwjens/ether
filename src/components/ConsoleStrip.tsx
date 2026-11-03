@@ -5,7 +5,7 @@
 // 0 dB has a wider tick + a bright notch on the rail surface for tactile reference.
 // VU meter: full height, right side, same color coding as before.
 
-import FaderRouting from "./FaderRouting";
+import FaderRouting, { DuckButton } from "./FaderRouting";
 import { gainToPos, faderMarks } from "../lib/faderLaw";
 import { useFaderControl } from "../lib/useFaderControl";
 import FaderValue from "./FaderValue";
@@ -20,8 +20,6 @@ import { CH_INDEX, useMeterSubscription, latestMeters } from "./meter/meterStore
 import { auxFaultFor } from "./meter/auxFault";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useSongMenu } from "../lib/songActions";
-import { openChannelRack, useChannelRackLamps } from "../hooks/useChannelRack";
-import { isChannelSlot } from "./rack/channelRack";
 import { useElementWidth } from "../hooks/useElementWidth";
 import { isNarrowStrip } from "../lib/boardLayout";
 
@@ -206,9 +204,6 @@ export default function ConsoleStrip({
 
   // SLICE 5 — THE EQ DOOR (docs/dsp-channel-rack-eq.md §4): every strip with an engine slot opens its own
   // channel rack. Lit = that fader's rack has something IN (read from the stored rack, shared per station).
-  const rackSlot = deckId && isChannelSlot(deckId.toUpperCase()) ? deckId.toUpperCase() : null;
-  const lamps = useChannelRackLamps(rackSlot && isReady ? stationId : null);
-  const eqLit = rackSlot ? (lamps as Record<string, boolean | undefined>)[rackSlot] === true : false;
 
   // MIDI hardware fader sync
   const midiKey = `deck_${label.toLowerCase().replace(/[^a-z]/g, "")}_volume`;
@@ -408,23 +403,7 @@ export default function ConsoleStrip({
       {/* ── THE THREE ROUTING SETTINGS — on every engine fader (Jeff, 2026-10-11: faders are generic shells) ── */}
       {deckId && <FaderRouting stationId={stationId ?? null} stationUuid={stationUuid ?? null} slot={String(deckId)} label={label} />}
 
-      {/* ── EQ — the door to this fader's channel rack (Slice 5) ── */}
-      {rackSlot && (
-        <div style={{ padding: "8px 8px 0", borderTop: "1px solid var(--strip-divider, #303040)" }}>
-          <button onClick={() => { playClick(); openChannelRack(rackSlot as any); }}
-            title={`${label}'s channel EQ — Filters and PEQ${eqLit ? " (something is IN)" : " (nothing IN — the audio is untouched)"}. Opens the rack window at ${rackSlot}.`}
-            style={{
-              width: "100%", height: 32, borderRadius: 3, cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              background: eqLit ? "color-mix(in srgb, var(--slot-eq) 22%, transparent)" : "var(--bg-tertiary, #232330)",
-              border: `1px solid ${eqLit ? "var(--slot-eq)" : "var(--border-primary, #333)"}`,
-            }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: eqLit ? "var(--slot-eq)" : "transparent",
-                           border: `1px solid ${eqLit ? "var(--slot-eq)" : "var(--text-tertiary, #666)"}` }} />
-            <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", color: eqLit ? "var(--slot-eq)" : "var(--text-tertiary, #666)" }}>EQ</span>
-          </button>
-        </div>
-      )}
+      {/* EQ (Jeff, 2026-11-02): no EQ button on the strip — the EQ window (Rack) picks the channel at its top. */}
 
       {/* THE COMPRESSOR LAMP — lit while this channel's compressor is reducing gain (≥ 1 dB), with how much */}
       {slotIndex !== undefined && compGr >= 1 && (
@@ -470,7 +449,7 @@ export default function ConsoleStrip({
         </div>
       )}
 
-      {/* ── ON / PFL — flat; stacked on a narrow strip instead of squeezed ── */}
+      {/* ── ON / PFL / DUCK — flat; stacked on a narrow strip instead of squeezed. DUCK only on the faders that have it. ── */}
       <div data-strip-buttons={narrow ? "stacked" : "row"} style={{
         display: "flex", flexDirection: narrow ? "column" : "row", alignItems: "stretch",
         gap: narrow ? 6 : 8, padding: narrow ? "8px 8px 10px" : "10px 8px 12px",
@@ -503,6 +482,9 @@ export default function ConsoleStrip({
         }}>
           <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: pflActive ? "#fff" : "var(--text-tertiary, #666)" }}>PFL</span>
         </button>
+
+        {/* DUCK — the fader's one duck button (FaderRouting DuckButton): ON | PFL | DUCK */}
+        {deckId && <DuckButton stationId={stationId ?? null} stationUuid={stationUuid ?? null} slot={String(deckId)} label={label} narrow={narrow} />}
 
       </div>
       {songMenu.node}

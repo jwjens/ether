@@ -57,7 +57,7 @@ A strip's meter shows **the source**, not what the fader lets through:
   metered by the audio engine like every channel; when it isn't live (no input, disconnected, lost, or pure
   digital silence) its meter is hatched **NOT FED** instead of reading zero. See **Mic on Air**.
 - **A strip's meter is also BEFORE its channel EQ** — it shows the source as it arrives. To see what the EQ
-  did, open the fader's rack (the strip's **EQ** button): its **IN** and **OUT** meters are before and after
+  did, open the fader's rack (☰ → **Processor**, pick the fader under **Channel**): its **IN** and **OUT** meters are before and after
   the rack. See **Channel EQ**.
 
 ## Master meters are AFTER the fader

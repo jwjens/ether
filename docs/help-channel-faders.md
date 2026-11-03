@@ -62,17 +62,21 @@ start — the engine glides it instead of jumping, so nothing clicks or "zips". 
 **Settings → Loudness & fader smoothing → Fader smoothing** (20 ms unless you change it; 0 = an instant step).
 A level that isn't changing is untouched.
 
-### The buttons under a fader: DUCK (and MAIN on a Park mic)
+### The buttons at the bottom of a fader: ON | PFL | DUCK (and MAIN on a Park mic)
 
-Every fader plays in the park. The buttons under it:
+Every fader plays in the park. The bottom row of each fader:
 
-- **Decks A, B and C:** no buttons. The music dips by itself while any fader with **DUCK** lit is playing.
-- **Every other fader** (announcements, carts, sweepers, jukebox, mics…): one button, **DUCK**. Lit = while this fader
-  plays, the music dips. How far and how fast is set in **Settings → Ducker**.
+- **Decks A, B and C:** **ON** and **PFL**. The music dips by itself while any fader with **DUCK** lit is playing.
+- **Every other fader** (announcements, carts, sweepers, jukebox, mics…): **ON | PFL | DUCK**. DUCK lit = while this
+  fader plays, the music dips. How far and how fast is set in **Settings → Ducker**. It is the fader's only DUCK
+  button (the DUCK ON/OFF under the source picker is gone; it was the same setting).
 - **A fader whose source is a Park mic** also has **MAIN**. Lit = the voice also goes on air. Not lit = the voice
   plays in the park only.
 
-This update changes only which buttons the strip shows. Every fader keeps playing exactly as it did.
+This changes only where the buttons are. Every fader keeps playing exactly as it did, with the DUCK it had.
+
+There is no **EQ** button on the strips. A fader's channel EQ is in the EQ window (☰ → **Processor**, or the on-air decks'
+**EQ**): pick the deck or fader at the top. See `help-channel-eq.md`.
 
 ### PENDING on a channel
 

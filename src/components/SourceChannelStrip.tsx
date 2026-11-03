@@ -49,10 +49,6 @@ interface Props {
   onPfl?: (on: boolean) => void;
   /** Persist a new patch point for this slot. */
   onKindChange: (kind: SourceKind | "") => void;
-  /** DUCK — when this channel has audio, the programme drops under it and rises back after.
-   *  Persisted on the channel's own row (deck_configs.duck, v43) and pushed to the engine. */
-  duck: boolean;
-  onDuckChange: (duck: boolean) => void;
   /** Remove this channel from the board (the − control). */
   onRemove: () => void;
   /** Why the last "−" was refused (the engine would not release its input) — shown under the dropdown, never silent. */
@@ -64,7 +60,7 @@ interface Props {
 }
 
 export default function SourceChannelStrip({
-  config, volume, isOn, onVolumeChange, onToggleOn, onSetOn, onPfl, onKindChange, duck, onDuckChange, onRemove, removeError = null, compact, pendingShow = null, onTakeNow,
+  config, volume, isOn, onVolumeChange, onToggleOn, onSetOn, onPfl, onKindChange, onRemove, removeError = null, compact, pendingShow = null, onTakeNow,
 }: Props) {
   const meta = sourceKindMeta(config.kind);
   // ONE NAME PER FADER — the board letter, never the engine slot id (src/lib/boardName.ts).
@@ -278,45 +274,9 @@ export default function SourceChannelStrip({
         {patchErr && <div style={{ fontSize: 8, color: TONE.bad }}>⚠ {patchErr}</div>}
         {removeError && <div style={{ fontSize: 8, color: TONE.bad }}>⚠ {removeError}</div>}
 
-        {/* DUCK — the one control §B.6 exposes today. Threshold, attack, hold, release and depth
-            are implemented with the design's defaults but have no tuning UI yet, so this says ON/OFF
-            and nothing more. A control that implied tunability it does not have would be the same
-            defect as the AUTO-DUCK button this replaces. */}
-        {/* THE DUCKER IS ALWAYS AVAILABLE, WHATEVER THE SOURCE IS.
-
-            Jeff, 2026-09-14: "there is no specific deck/fader for anything the drop-down source menu
-            is for the user to decide what input goes there just like a wheatstone board the ducker
-            option should always be available whether its a sweeper announcement cart jukebox doesnt
-            matter but the user would most likely have ducker off on a deck/fader they have sweeper
-            on." And: "deck e should never be dedicated to sweepers."
-
-            WHAT WAS HERE. On a sweeper-kinded channel this hid the toggle and printed "SWEEPERS RIDE
-            WITH THE MUSIC — never duck it", on the reasoning that the engine could not duck from that
-            slot so a control would be dishonest. Two things wrong with that. The channel is GENERIC —
-            the dropdown is the operator's choice of what feeds this fader, not a fact about the
-            hardware — so deciding its controls from its current selection is the wrong model. And the
-            behaviour it promised was not happening: the duck flag on that channel was ON at -34 dB and
-            was cutting the lyrics off the end and start of songs, with no way to reach it from the
-            screen because this had removed the only control.
-
-            A control taken off the screen does not stop the behaviour. It stops the operator fixing it. */}
-        <button
-          onClick={() => onDuckChange(!duck)}
-          role="switch"
-          aria-checked={duck}
-          title={duck
-            ? "Audio on this channel ducks the programme under it, and it rises back when the channel goes quiet"
-            : "Ducking off — this channel mixes over the programme at full level"}
-          style={{
-            width: "100%", padding: "3px 4px", borderRadius: 2, cursor: "pointer",
-            fontSize: 8, fontWeight: 700, letterSpacing: "0.08em",
-            background: duck ? "rgb(from var(--accent-cyan) r g b / 0.12)" : "var(--bg-tertiary)",
-            border: `1px solid ${duck ? "rgb(from var(--accent-cyan) r g b / 0.45)" : "var(--border-primary)"}`,
-            color: duck ? "var(--accent-cyan)" : "var(--text-tertiary)",
-          }}
-        >
-          {duck ? "DUCK ON" : "DUCK OFF"}
-        </button>
+        {/* DUCK (Jeff, 2026-11-02): one DUCK button per fader, in the strip's bottom row next to ON and PFL (ConsoleStrip →
+            FaderRouting DuckButton). The DUCK ON/OFF that was here wrote the same setting (deck_configs.duck + the engine's
+            setDuck); it is always available whatever the source is (Jeff, 2026-09-14), now from that one button. */}
 
       </div>
 

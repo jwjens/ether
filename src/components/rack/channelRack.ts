@@ -13,6 +13,13 @@ import { clampChannelModule } from "./eqMath";
 export const CHANNEL_SLOTS = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"] as const;
 export type ChannelSlot = typeof CHANNEL_SLOTS[number];
 export const isChannelSlot = (s: string): s is ChannelSlot => (CHANNEL_SLOTS as readonly string[]).includes(s);
+/** THE EQ WINDOW'S CHANNEL SELECTOR (Jeff, 2026-11-02: "remove the EQ button from every fader strip. In the EQ window, add
+ *  a selector at the top listing every deck and fader on the board"): the channels ON THE BOARD, in board order — decks A,
+ *  B, C always (automation's decks are always on the board), every other fader when its row is on the board (enabled). */
+export function boardChannels(rows: { slot: string; enabled: number | boolean }[]): ChannelSlot[] {
+  const on = new Set(rows.filter(r => r.enabled === 1 || r.enabled === true).map(r => String(r.slot).toUpperCase()));
+  return CHANNEL_SLOTS.filter(s => s === "A" || s === "B" || s === "C" || on.has(s));
+}
 /** A channel rack holds at most this many slots (rack.rs CHANNEL_SLOTS). */
 export const CHANNEL_RACK_SLOTS = 4;
 

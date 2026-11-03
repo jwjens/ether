@@ -2,7 +2,7 @@
 feature: channel-dynamics
 title: Gate and Compressor on a channel (and the Voice preset)
 summary: Every fader's rack can hold a Gate (turns the room down when nobody is talking) and a Compressor (evens out a voice) — with a transfer graph, live gain-reduction meters, a COMP lamp on the fader, and a Voice preset to start from.
-where: The EQ button on any fader strip → the rack window at that fader → + GATE / + COMP, or Preset → Voice → TAKE.
+where: ☰ → Processor (the EQ window) → Channel: pick the fader → + GATE / + COMP, or Preset → Voice → TAKE.
 since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
@@ -27,7 +27,7 @@ A fader's rack runs in this order: **Filters → Gate → PEQ → Comp**. You ca
 
 ## Start from Voice
 
-1. Open the channel's rack (**EQ** on the fader).
+1. Open the channel's rack: **☰ → Processor**, then pick the fader under **Channel** at the top.
 2. In **Preset**, choose **Voice**, then press **TAKE ▸ Voice**.
 3. The channel now runs, all IN:
    - **HPF 80 Hz**;

@@ -17,7 +17,7 @@ tour: true
 - **its own channel rack:** Filters, a **Gate**, the PEQ and a **Compressor** (see **Channel EQ** and **Gate and
   Compressor**). **Start from the Voice preset**: open the rack (EQ on the strip) → Preset → Voice → TAKE;
 - **its fader and ON**;
-- **the ducker**: switch DUCK ON and the music drops under your voice.
+- **the ducker**: light **DUCK** (bottom row of the fader, next to ON and PFL) and the music drops under your voice.
 
 **It goes on air**, through the same engine as the music. Before this, the mic only played on this computer's
 speakers and never reached listeners.

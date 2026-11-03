@@ -2,7 +2,7 @@
 feature: channel-eq
 title: Channel EQ (Filters and PEQ on a fader)
 summary: Every fader has its own rack — a high-pass and low-pass filter, and a 4-band parametric EQ — drawn as a curve you can drag, with IN and OUT meters so you can see what it did.
-where: The EQ button on any fader strip (and on the on-air decks A/B/C). In the rack window, the selector row: MASTER | A B C D E F | CART | G…K (each fader by its board letter).
+where: ☰ → Processor (the EQ window), or the EQ button on the on-air decks A/B/C. At the top of the window, the Channel selector lists every deck and fader on the board (each by its board letter).
 since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
@@ -30,13 +30,13 @@ before channel EQ existed.
 
 ## Open it
 
-1. On any fader strip, press **EQ**. When the lamp is lit, that fader's rack has something **IN**.
-2. The rack window opens at that fader. If it is already open, it switches to that fader.
-3. Inside the window, the **selector row** at the top goes to any rack:
-   - **MASTER**;
-   - **A B C D E F**, **CART**, **G…K**, the same letters as the board. A dot on a tab means that fader's rack has something IN.
+1. Open the EQ window: **☰ → Processor**. (The fader strips have no EQ button.)
+2. At the top, **Channel** lists every deck and fader on the board, with the board's letters. Pick one; the window
+   shows that channel's rack. A dot on a channel means its rack has something **IN**.
+3. **MASTER**, next to it, is the master rack.
 
-On the **on-air decks A/B/C**, the deck's **EQ** button opens the same rack.
+On the **on-air decks A/B/C**, the deck's **EQ** button opens the same window at that deck. EQ settings saved before this
+change are kept exactly as they were.
 
 ## Using it
 
