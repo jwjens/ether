@@ -398,7 +398,7 @@ Decks A, B and C are the music decks. Automation plays from them in turn, and th
 
 - Each deck has its own colour: A blue, B green, C purple. The same colours mark the deck rows in Up Next and the A/B/C buttons in the Library.
 - The bar at the top of a deck strip shows its role. The deck on air fills from left to right as the song plays. The deck that plays next pulses.
-- Under the fader: **ON** and **PFL** (below), and **EQ**, which opens that channel's EQ rack (see *Streaming*).
+- Under the fader: **ON** and **PFL** (below). A channel's EQ is set in the EQ window, **☰ → Processor**: pick the channel in **Channel** at the top (see *Streaming*).
 
 ### One strip or three
 
@@ -449,7 +449,7 @@ Use the dropdown at the top of the strip:
 
 ### DUCK
 
-**DUCK ON** makes the music dip while this channel has audio, and rise again when it goes quiet. **DUCK OFF** lets the channel mix over the music at full level. The setting is under the source dropdown. A second **DUCK** button just above the channel's **EQ** button sets the same thing (lit amber = on). How far and how fast the music dips is set in **Settings → Audio → Ducker**.
+**DUCK** is the third button under the fader: **ON | PFL | DUCK**. Lit amber, it makes the music dip while this channel has audio, and rise again when it goes quiet. Not lit, the channel mixes over the music at full level. How far and how fast the music dips is set in **Settings → Audio → Ducker**.
 
 DUCK is on every source channel, whatever feeds it. Decks A, B and C have no DUCK; the music is what gets ducked.
 
@@ -465,7 +465,7 @@ A microphone is a source channel patched to a microphone. It goes on air through
 2. In its dropdown, under **INPUT DEVICES (this computer)**, choose your microphone or audio interface. (**Mic — pick an input…** sets the channel to Mic without choosing a device yet.)
 3. The line under the dropdown shows the mic's state, for example **● IN 1 · +0 dB · live**. If it shows **no input — Settings → Audio**, the mic has no input yet.
 4. Bring the fader up and press **ON**.
-5. To have the music dip while you talk, set **DUCK ON**.
+5. To have the music dip while you talk, press **DUCK** (lit amber).
 
 Click the state line to open **Settings → Audio**. Its **Mic Inputs (on air)** section is where you set the input number and gain. **☰ → Patch Bay** chooses the input too; it is the same setting. If a device is unplugged, the dropdown shows it as *(not connected)* and the meter reads **NOT FED** instead of a flat zero.
 
@@ -506,7 +506,7 @@ The panel at the right of the board.
 - **Master** — the broadcast level: what listeners hear. Pull it down and the audience hears it quieter.
 - **Monitor** — the level in your room. Turn it down and the room goes quiet while the station keeps broadcasting at full level.
 - **Limiter** — how hard the limiter is working.
-- **Master EQ → OPEN** and **Processor → OPEN** — open the master rack in its own window. See *Streaming*.
+- **Processor → OPEN** — opens the EQ window (the Processor) in its own window. See *Streaming*.
 - **Station** — On Air (LIVE or STBY), Uptime and Next Break. Click the heading to show or hide it.
 - **Send feed** — the Remote Link sender. See *Remote Link*.
 - **Station monitor strips** — a speaker level and mute for each station on this computer. These change only what you hear in the room, never the broadcast.
@@ -1744,7 +1744,7 @@ An announcement plays on a board channel whose input is set to **Announcement**.
 page says so in amber, and the **▶ AIR** buttons are greyed.
 
 1. On the board, press **+** and choose **Announcement**.
-2. Turn **DUCK ON** for that channel so the programme steps back while it plays.
+2. Press that channel's **DUCK** button (lit amber) so the programme steps back while it plays.
 
 How far the programme ducks, and for how long, is set per station in **Settings → Ducker**. There is no
 per-announcement duck setting.
@@ -2369,7 +2369,8 @@ Each station has its own settings. A change reaches the audio engine within a fe
 ### Adjust the chain
 
 1. Open the Processor: **Master Out → Processor → OPEN**. It opens in its own window.
-   **Master Out → Master EQ → OPEN** opens the same window with the GEQ selected.
+   **☰ → Processor** opens the same window. The **Channel** selector at the top lists every deck and fader on the board,
+   then **MASTER OUT**; pick one to adjust its EQ. This window is the only place EQ is set.
 2. Tap a module in the strip. The editor below names it, for example *"editing: MONITOR · RIDE"*.
 3. Change the controls. Each change goes to air at once and is saved for this station.
    - **GEQ**: ten band faders over a live spectrum, **FLAT** (all bands to 0 dB), and **IN / OUT**.
@@ -2407,7 +2408,7 @@ Master Out is the panel on the right of the main screen.
 - **Master** fader: the station's programme level.
 - **Monitor** fader: your local listening level.
 - **Limiter**: the limiter's live reading.
-- **Master EQ → OPEN** and **Processor → OPEN**: open the Processor (see above).
+- **Processor → OPEN**: opens the Processor (see above).
 - **Station** (click to open): **On Air** shows **LIVE** while programme audio is playing, and **STBY** when it is
   not. **Stream** shows the station's real stream state: **ON AIR**, **CONNECTING**, **ERROR** or **OFF** (the same
   as Stream Manager). **Uptime** and **Next Break** are shown too.
@@ -2502,7 +2503,7 @@ If the station has no source faders, the grid says so. Add one with **+** on the
 
 ### Ducker
 
-The Ducker sets how far the programme drops when a source channel with **DUCK ON** has audio.
+The Ducker sets how far the programme drops when a source channel with **DUCK** lit has audio.
 
 - **Depth** (dB down), **Hold**, **Release**, **Attack** and **Threshold**. Each control has a hint under it.
 - **Which decks step back**: ticked decks duck under a source. Unticked decks play through at full level.
