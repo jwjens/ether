@@ -1,3 +1,17 @@
+## [4.6.71] — 2026-11-03
+
+**Important when updating:** close Ether fully (including the tray icon) and open it again after the update, so the
+audio engine starts fresh.
+
+### The board
+
+- **One DUCK button per fader, in the bottom row: ON | PFL | DUCK.** The two old duck buttons (DUCK ON/OFF under the
+  source picker, and DUCK above EQ) are gone. It's the same setting as before, on the same faders (every fader except
+  decks A, B and C).
+- **EQ opens from one place: ☰ → Processor.** The EQ buttons are gone from the fader strips, the A/B/C deck cards and
+  Master Out. The Channel selector at the top of that window lists every deck and fader on the board, then Master Out.
+  EQ settings you already saved are unchanged.
+
 ## [4.6.70] — 2026-11-02
 
 Everything since 4.6.57, the last published version. (4.6.58 to 4.6.69 were test builds and were never published, so

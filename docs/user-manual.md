@@ -1,4 +1,4 @@
-# Ether User Manual — version 4.6.70
+# Ether User Manual — version 4.6.71
 
 This manual follows Ether's own menus. Each chapter says what a part of Ether is for, where to find it, and how to use
 it step by step. The **Plan** line under a chapter says which plans include it: **Local**, **Live 128**, **Live 320** or
