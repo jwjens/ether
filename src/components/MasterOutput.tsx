@@ -534,28 +534,8 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     (proc.bypass.stream.ride || proc.bypass.stream.limiter) ? "stream" : null,
   ].filter(Boolean).join(" + ");
 
-  // ── Master EQ (SLICE 4, docs/dsp-rack-framework.md) — the GEQ is a slot in the MASTER RACK now: one EQ home.
-  // This row is its door (OPEN → the rack, GEQ selected) and its lamp (the rack's GEQ is IN and not flat). It
-  // no longer reads or writes the EQ itself — the rack writes it through rack:set, per station.
-  const [eqActive, setEqActive] = useState(false);
-  useEffect(() => {
-    if (stationId == null) return;
-    let alive = true;
-    setEqActive(false);
-    const read = async () => {
-      try {
-        const r = await (window as any).ether?.audio?.getRack?.(stationId);
-        if (!alive || !r || r.ok !== true) return;
-        const g = (r.doc?.sections?.pgm || []).find((s: any) => s?.module?.type === "geq");
-        setEqActive(!!g && g.in !== false && (g.module.bands || []).some((x: number) => Math.abs(x) > 0.05));
-      } catch { /* the lamp stays off rather than guessing */ }
-    };
-    read();
-    // The rack window bumps this when it saves (a storage event reaches the OTHER windows — this one).
-    const onStore = (e: StorageEvent) => { if (e.key === "ether.rack.rev") read(); };
-    window.addEventListener("storage", onStore);
-    return () => { alive = false; window.removeEventListener("storage", onStore); };
-  }, [stationId]);
+  // EQ (Jeff, 2026-11-02): no Master EQ button here — the master EQ (the GEQ in the master rack) is reached only from the
+  // EQ window, ☰ → Processor (MASTER OUT in its Channel selector). The Processor row below opens that same window.
   /** Open the rack pop-out with a slot selected (it re-selects if the window is already open). */
   const openRackAt = (slot: string) => {
     try { localStorage.setItem("ether.rack.select", slot); } catch { /* the rack opens on its default slot */ }
@@ -786,31 +766,6 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       <div style={{ padding: "6px 14px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Limiter</span>
         <LimiterReadout stationUuid={stationUuid} />
-      </div>
-
-      {/* Master EQ toggle */}
-      <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <div style={{
-            width: 7, height: 7, borderRadius: "50%",
-            background: eqActive ? "var(--accent-amber)" : "var(--border-primary)",
-            boxShadow: eqActive ? "0 0 6px var(--accent-amber)" : "none",
-            transition: "all 0.2s",
-          }} />
-          <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Master EQ</span>
-        </div>
-        <button
-          onClick={() => openRackAt("pgm:s-geq")}
-          title="The 10-band master EQ — opens the master rack with the GEQ selected"
-          style={{
-            fontSize: 13, fontWeight: 800, letterSpacing: "0.1em",
-            padding: "4px 14px", borderRadius: 4,
-            background: "rgb(from var(--accent-cyan) r g b / 0.1)",
-            border: "1px solid rgb(from var(--accent-cyan) r g b / 0.45)",
-            color: "var(--accent-cyan)",
-            cursor: "pointer", transition: "all 0.15s",
-          }}
-        >OPEN</button>
       </div>
 
       {/* PROCESSOR — beside the EQ. The chain has always run; this is the door to it. OPEN is a REAL

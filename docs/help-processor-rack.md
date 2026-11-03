@@ -2,7 +2,7 @@
 feature: processor-rack
 title: The Master Rack (Processor)
 summary: The master processing chain as a rack you can see and play while on air — the master EQ, then for each output (Monitor and Stream) the loudness ride and the true-peak limiter — with the meters pinned beside it and presets you Arm and Take.
-where: Master Out → Processor → OPEN (its own window). Master Out → Master EQ → OPEN opens it with the EQ selected.
+where: ☰ → Processor (its own window), or Master Out → Processor → OPEN. MASTER OUT in the window's Channel selector is this rack.
 since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
@@ -27,9 +27,10 @@ Each kind of module always has the same colour: **blue** for EQ, **cyan** for lo
 
 ## Open it
 
-1. Go to **Master Out** (right side).
-2. Next to **Processor**, press **OPEN**. The rack opens in its own window, so you can put it on another screen.
-3. Or next to **Master EQ**, press **OPEN**. The same rack opens with the **GEQ** already selected.
+1. Open **☰ → Processor**, or on **Master Out** (right side) press **OPEN** next to **Processor**. The window opens on its
+   own, so you can put it on another screen.
+2. In the **Channel** selector at the top, pick **MASTER OUT** (last, after the decks and faders). The master EQ is the
+   **GEQ** in this rack. (There is no Master EQ button on Master Out any more.)
 
 ## Using it
 

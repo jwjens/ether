@@ -75,8 +75,8 @@ Every fader plays in the park. The bottom row of each fader:
 
 This changes only where the buttons are. Every fader keeps playing exactly as it did, with the DUCK it had.
 
-There is no **EQ** button on the strips. A fader's channel EQ is in the EQ window (☰ → **Processor**, or the on-air decks'
-**EQ**): pick the deck or fader at the top. See `help-channel-eq.md`.
+There is no **EQ** button on the strips. A fader's channel EQ is in the EQ window (☰ → **Processor**): pick the deck, fader
+or MASTER OUT at the top. See `help-channel-eq.md`.
 
 ### PENDING on a channel
 

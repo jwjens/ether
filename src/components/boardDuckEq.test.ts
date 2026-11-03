@@ -58,6 +58,21 @@ describe("EQ: no button on the strips; the EQ window picks the channel", () => {
     expect(boardChannels([{ slot: "s1", enabled: true }])).toEqual(["A", "B", "C", "S1"]);
   });
 
+  it("no EQ button on the A/B/C deck cards or on Master Out either: EQ is reached only from the EQ window", () => {
+    expect(src("OnAirDeck.tsx")).not.toMatch(/openChannelRack|useChannelRackLamps|>EQ</);
+    const master = src("MasterOutput.tsx");
+    expect(master).not.toMatch(/Master EQ<|openRackAt\("pgm:s-geq"\)/);
+    expect(src("../hooks/useChannelRack.ts")).not.toMatch(/export function openChannelRack/);
+  });
+
+  it("the selector is the board's order: decks and faders, then MASTER OUT last", () => {
+    const rack = src("rack/Rack.tsx");
+    const sel = rack.slice(rack.indexOf(">Channel<"));
+    expect(sel.indexOf("map(s => tab(s, name(s)))")).toBeGreaterThan(0);
+    expect(sel.indexOf('tab("master", "MASTER OUT")')).toBeGreaterThan(sel.indexOf("map(s => tab(s, name(s)))"));
+    expect(rack.match(/tab\("master"/g)?.length).toBe(1);
+  });
+
   it("the EQ window shows that selector at its top and still opens each channel's own saved rack (rack name unchanged)", () => {
     const rack = src("rack/Rack.tsx");
     expect(rack).toMatch(/boardChannels\(rows\)/);

@@ -6,7 +6,6 @@ import type { DeckRole } from "../lib/deckRole";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { resolveArtwork, isImagingClass } from "../lib/albumArt";
-import { openChannelRack, useChannelRackLamps } from "../hooks/useChannelRack";
 
 interface Props {
   deck: DeckState | null;
@@ -36,11 +35,8 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
   const [categoryColor, setCategoryColor] = useState<string | null>(null);
   const [categoryName, setCategoryName] = useState<string | null>(null);
 
-  // ── EQ — SLICE 5 (docs/dsp-channel-rack-eq.md §6): this deck's EQ is its CHANNEL RACK. The old 10-band
-  // drawer stored `eq_deck_<X>` and sent it as station 1's MASTER EQ — it never processed the deck. Removed; its
-  // stored values are not migrated (they never affected audio — Jeff's slice 5 ruling 4). The button is the door.
-  const eqLamps = useChannelRackLamps(stationId);
-  const eqActive = eqLamps[deckId] === true;
+  // EQ (Jeff, 2026-11-02): no EQ button on the deck card — a deck's EQ (its channel rack) is reached only from the EQ
+  // window, ☰ → Processor, whose Channel selector lists every deck and fader on the board plus Master Out.
 
   // Deck values — must be declared before any useEffect that references them
   const status = deck?.status || "idle";
@@ -697,37 +693,6 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
           {playBtnLabel}
         </button>
 
-        {/* EQ — the door to this deck's channel rack (Slice 5) */}
-        <button
-          onClick={() => openChannelRack(deckId)}
-          title={`Deck ${deckId}'s channel EQ — Filters and PEQ${eqActive ? " (something is IN)" : " (nothing IN — the audio is untouched)"}. Opens the rack window at ${deckId}.`}
-          style={{
-            width: 36, height: 36,
-            borderRadius: 0,
-            background: eqActive ? "color-mix(in srgb, var(--slot-eq) 18%, transparent)" : "var(--bg-secondary)",
-            border: `1px solid ${eqActive ? "var(--slot-eq)" : "var(--border-secondary)"}`,
-            color: eqActive ? "var(--slot-eq)" : "var(--text-tertiary)",
-            cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            flexDirection: "column" as const,
-            gap: 2,
-            flexShrink: 0,
-            transition: "all 0.15s ease",
-            position: "relative" as const,
-          }}
-        >
-          <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: "0.06em" }}>EQ</span>
-          {/* Active dot */}
-          {eqActive && (
-            <div style={{
-              position: "absolute",
-              top: 3, right: 3,
-              width: 4, height: 4, borderRadius: "50%",
-              background: "var(--slot-eq)",
-              boxShadow: "0 0 4px var(--slot-eq)",
-            }} />
-          )}
-        </button>
 
       </div>
     </div>

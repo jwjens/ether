@@ -120,12 +120,12 @@ export default function Rack({ stationId, stationUuid }: Props) {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "8px 12px 0" }}>
-        <span style={{ ...LABEL, marginRight: 4 }}>Rack</span>
-        {tab("master", "MASTER")}
-        <span style={{ width: 8 }} />
-        <span style={{ ...LABEL, marginRight: 2 }} title="Pick the deck or fader to EQ — every deck and fader on the board">Channel</span>
-        {/* a channel opened earlier that is no longer on the board stays reachable while it is selected */}
+        {/* THE CHANNEL SELECTOR (Jeff, 2026-11-02): every deck and fader on the board plus Master Out, in board order —
+            the only way to a fader's, a deck's or the master's EQ. A channel opened earlier that is no longer on the board
+            stays reachable while it is selected. */}
+        <span style={{ ...LABEL, marginRight: 4 }} title="Pick the deck, fader or Master Out to EQ — everything on the board, in board order">Channel</span>
         {(view !== "master" && !onBoard.includes(view) ? [...onBoard, view] : onBoard).map(s => tab(s, name(s)))}
+        {tab("master", "MASTER OUT")}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         {view === "master"

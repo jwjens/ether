@@ -4,8 +4,9 @@
 // "ch:<slot>". rack:set delivers to THIS station's engine first and stores `rack_ch_<slot>` only if the engine
 // accepted it; a refused rack is shown with its reason and the panel goes back to what is running.
 //
-// Also here: the EQ DOOR (openChannelRack — every fader strip's EQ button, and the on-air decks') and the
-// door's LAMP (useChannelRackLamps — lit when that fader's stored rack has something IN). The lamp re-reads
+// Also here: the LAMP (useChannelRackLamps — lit when that fader's stored rack has something IN), shown on the EQ
+// window's Channel selector. (No EQ buttons on the strips, decks or Master Out since 2026-11-02 — Jeff: "EQ is reached
+// only from the EQ window (☰ → Processor)".) The lamp re-reads
 // when any rack is written (the `ether.rack.rev` bump crosses windows) and every 15 s (a rack synced in from
 // another install).
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,12 +19,6 @@ const REV_KEY = "ether.rack.rev";
 function bumpRev(stationId: number) {
   try { localStorage.setItem(REV_KEY, `${stationId}:${Date.now()}`); } catch { /* not essential */ }
   lampListeners.forEach(fn => fn());   // same window (a storage event only reaches OTHER windows)
-}
-
-/** Open the rack window at a fader's channel rack (or re-select it if the window is already open). */
-export function openChannelRack(slot: ChannelSlot) {
-  try { localStorage.setItem(RACK_VIEW_KEY, rackName(slot)); } catch { /* opens on its last view */ }
-  try { (window as any).ether?.invoke("window:popout", "processor"); } catch { /* not in electron */ }
 }
 
 export function useChannelRack(stationId: number | null, slot: ChannelSlot) {
